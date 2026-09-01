@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fastguard
+      POSTGRES_PASSWORD: fastguard
+      POSTGRES_DB: fastguard_leads
+    ports:
+      - "5434:5432"
+    volumes:
+      - fg_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fastguard"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  fg_pg:

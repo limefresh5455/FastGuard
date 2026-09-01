@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id             String         @id @default(cuid())
+  name           String
+  normalizedName String
+  companyType    String         @default("UNKNOWN")
+  website        String?
+  phone          String?
+  city           String?
+  state          String?
+  sourceUrl      String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  contacts       Contact[]
+  projects       Project[]
+  triggers       TriggerEvent[]
+  leads          Lead[]
+
+  @@index([normalizedName])
+}
+
+model Contact {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  firstName String?
+  lastName  String?
+  title     String?
+  email     String?
+  phone     String?
+  sourceUrl String?
+  createdAt DateTime @default(now())
+  leads     Lead[]
+
+  @@index([companyId])
+}
+
+model Project {
+  id           String         @id @default(cuid())
+  companyId    String?
+  company      Company?       @relation(fields: [companyId], references: [id])
+  name         String
+  address      String?
+  city         String?
+  state        String?
+  projectType  String?
+  projectStage String?
+  projectValue Float?
+  sourceUrl    String?
+  createdAt    DateTime       @default(now())
+  triggers     TriggerEvent[]
+  leads        Lead[]
+}
+
+model TriggerEvent {
+  id          String   @id @default(cuid())
+  companyId   String?
+  projectId   String?
+  company     Company? @relation(fields: [companyId], references: [id])
+  project     Project? @relation(fields: [projectId], references: [id])
+  triggerType String
+  triggerDate DateTime
+  headline    String
+  sourceUrl   String
+  createdAt   DateTime @default(now())
+  leads       Lead[]
+}
+
+model Lead {
+  id                 String        @id @default(cuid())
+  companyId          String
+  contactId          String?
+  projectId          String?
+  triggerId          String?
+  company            Company       @relation(fields: [companyId], references: [id])
+  contact            Contact?      @relation(fields: [contactId], references: [id])
+  project            Project?      @relation(fields: [projectId], references: [id])
+  trigger            TriggerEvent? @relation(fields: [triggerId], references: [id])
+  score              Int           @default(0)
+  recommendedService String?
+  source             String
+  status             String        @default("NEW")
+  classified         Boolean       @default(false)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@index([score])
+  @@index([source])
+}
+
+model Source {
+  id              String    @id @default(cuid())
+  code            String    @unique
+  name            String
+  category        String
+  lastRunAt       DateTime?
+  recordsCreated  Int       @default(0)
+
+  @@map("sources")
+}
