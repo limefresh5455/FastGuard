@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { prisma } from "../../db/client";
 import { QUALIFIED_SCORE } from "../../config/env";
+import { ACTIVE_PROJECT_STAGES } from "../../lib/constructionFit";
 import { leadCardInclude, toDashboardRow } from "../../services/dashboard";
 
 export async function dashboardRoutes(app: FastifyInstance) {
@@ -17,7 +18,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
     async () => {
       const [qualified, all, imported, discovered, classified] = await Promise.all([
         prisma.lead.findMany({
-          where: { score: { gte: QUALIFIED_SCORE }, status: { not: "EXCLUDED" } },
+          where: {
+            score: { gte: QUALIFIED_SCORE },
+            status: { not: "EXCLUDED" },
+            project: { projectStage: { in: [...ACTIVE_PROJECT_STAGES] } },
+          },
           orderBy: { score: "desc" },
           take: 100,
           include: leadCardInclude,

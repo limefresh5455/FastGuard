@@ -1,5 +1,6 @@
 import { env } from "../config/env";
 import { prisma } from "../db/client";
+import { inferNewsProjectStage, isActiveConstructionStage } from "../lib/constructionFit";
 import { normalizeCompanyName } from "../lib/normalize";
 import { scoreLead } from "../scoring/scoreLead";
 import { bumpSource } from "./sources";
@@ -10,16 +11,19 @@ export interface NewsHit {
   description: string;
   pubDate?: string;
   city: string;
-  source: "construction_news" | "property_news";
+  source: "construction_news";
 }
 
 const CONSTRUCTION_QUERIES = [
-  "new construction",
+  "under construction",
+  "construction underway",
   "groundbreaking",
-  "multifamily development",
+  "breaks ground",
+  "construction to begin",
+  "building permit issued",
+  "multifamily construction",
   "general contractor awarded",
 ];
-const PROPERTY_QUERIES = ["property management", "apartment community", "new property acquisition"];
 
 function googleNewsRss(q: string): string {
   return `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`;
@@ -65,10 +69,10 @@ function inferTrigger(text: string): string {
 async function fetchHits(location: string): Promise<NewsHit[]> {
   const hits: NewsHit[] = [];
   const seen = new Set<string>();
-  const jobs: Array<{ q: string; source: NewsHit["source"] }> = [
-    ...CONSTRUCTION_QUERIES.map((phrase) => ({ q: `${phrase} ${location}`, source: "construction_news" as const })),
-    ...PROPERTY_QUERIES.map((phrase) => ({ q: `${phrase} ${location}`, source: "property_news" as const })),
-  ];
+  const jobs: Array<{ q: string; source: NewsHit["source"] }> = CONSTRUCTION_QUERIES.map((phrase) => ({
+    q: `${phrase} ${location}`,
+    source: "construction_news" as const,
+  }));
   for (const job of jobs) {
     const res = await fetch(googleNewsRss(job.q), {
       headers: { "User-Agent": env.CRAWLER_USER_AGENT, Accept: "application/rss+xml" },
@@ -92,6 +96,11 @@ export async function discoverByLocation(location: string) {
   let skipped = 0;
 
   for (const hit of hits) {
+    const projectStage = inferNewsProjectStage(hit.title, hit.description);
+    if (!isActiveConstructionStage(projectStage)) {
+      skipped += 1;
+      continue;
+    }
     const existing = await prisma.lead.findFirst({ where: { source: hit.source, project: { sourceUrl: hit.link } } });
     if (existing) {
       skipped += 1;
@@ -108,7 +117,7 @@ export async function discoverByLocation(location: string) {
           city: hit.city,
           state: "FL",
           sourceUrl: hit.link,
-          companyType: hit.source === "property_news" ? "PROPERTY_MANAGER" : "CONSTRUCTION_COMPANY",
+          companyType: "CONSTRUCTION_COMPANY",
         },
       });
     }
@@ -119,7 +128,8 @@ export async function discoverByLocation(location: string) {
         city: hit.city,
         state: "FL",
         sourceUrl: hit.link,
-        projectType: hit.source === "property_news" ? "MULTIFAMILY" : "UNKNOWN",
+        projectType: "UNKNOWN",
+        projectStage,
       },
     });
     const trigger = await prisma.triggerEvent.create({
@@ -146,8 +156,7 @@ export async function discoverByLocation(location: string) {
         projectId: project.id,
         triggerId: trigger.id,
         score: scored.total,
-        recommendedService:
-          hit.source === "property_news" ? "Vacant Property Security" : "Construction Site Security",
+        recommendedService: "Construction Site Security",
         source: hit.source,
         status: "DISCOVERED",
       },

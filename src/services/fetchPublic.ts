@@ -118,7 +118,9 @@ export async function gatherCompanyIntel(params: {
     [
       `"${params.name}" official website`,
       `"${params.name}" contact email phone`,
-      `"${params.name}" ${city} contact`,
+      `"${params.name}" ${city} under construction`,
+      `"${params.name}" ${city} groundbreaking`,
+      `"${params.name}" ${city} construction`,
     ],
     4,
   );
@@ -131,6 +133,7 @@ export async function gatherCompanyIntel(params: {
   ]);
   const text = [
     `Company: ${params.name}. Location: ${city}. Website: ${knownSite || "unknown"}.`,
+    "Determine whether this company has a construction project currently underway or starting soon.",
     "Extract real people only (firstName, lastName, title, email, phone). Do not treat the company name as a contact.",
     news.map((n) => `${n.title}\n${n.description}\n${n.link}`).join("\n"),
     gathered.text,

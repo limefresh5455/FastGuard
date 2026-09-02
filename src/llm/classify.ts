@@ -1,25 +1,36 @@
 import OpenAI from "openai";
 import { z } from "zod";
 import { env, openRouterKey } from "../config/env";
+import { isActiveConstructionStage, resolveConstructionStage } from "../lib/constructionFit";
 
 const OutputSchema = z.object({
-  company_type: z.string(),
-  recommended_service: z.string(),
-  score: z.number().min(0).max(100),
-  reason: z.string(),
+  company_type: z.string().catch("OTHER"),
+  recommended_service: z.string().catch("General Security"),
+  score: z.coerce.number().min(0).max(100).catch(50),
+  reason: z.string().optional().default("No reason provided."),
   project_type: z.string().optional(),
   project_stage: z.string().optional(),
-  exclude: z.boolean().default(false),
+  exclude: z.coerce.boolean().default(false).catch(false),
 });
 
 export type ClassifyResult = z.infer<typeof OutputSchema>;
 
-const SYSTEM = `You are a B2B security sales analyst for Fast Guard (unarmed guards, construction site security, fire watch, remote cameras, mobile surveillance, vacant property security).
+const SYSTEM = `You are a B2B security sales analyst for Fast Guard (unarmed guards, construction site security, fire watch, remote cameras, mobile surveillance).
 Return JSON only. Do not invent contact names, emails, or phones.
-score is 0-100 lead quality for Fast Guard outbound.
-exclude true for security companies, competitors, and residential consumers.
-recommended_service must be one Fast Guard service.
-company_type: GENERAL_CONTRACTOR, DEVELOPER, PROPERTY_MANAGER, CONSTRUCTION_COMPANY, OTHER.`;
+
+Fast Guard only wants companies that need construction security RIGHT NOW:
+- KEEP if they have a construction project CURRENTLY UNDERWAY (site work, vertical construction, active jobsite).
+- KEEP if they have a construction project STARTING SOON (groundbreaking, permits issued, construction to begin within ~6 months).
+- EXCLUDE property managers, landlords, and operating buildings with no active or upcoming construction.
+- EXCLUDE completed / opened / delivered projects. Nearing completion still counts as UNDERWAY.
+
+JSON fields:
+- score 0-100: 90+ active jobsites, 70-89 starting soon, 20 or less if finished or no project.
+- exclude: true unless project_stage is UNDERWAY or STARTING_SOON.
+- reason: 1-2 sentences on project status (what is being built, and whether it is underway or starting soon).
+- project_stage: exactly one of UNDERWAY, STARTING_SOON, COMPLETED, NONE.
+- recommended_service: Construction Site Security when kept; otherwise General Security.
+- company_type: GENERAL_CONTRACTOR, DEVELOPER, PROPERTY_MANAGER, CONSTRUCTION_COMPANY, OTHER.`;
 
 export function llmEnabled(): boolean {
   return Boolean(openRouterKey());
@@ -86,20 +97,40 @@ export async function openRouterJson(system: string, user: string): Promise<unkn
   return null;
 }
 
+function applyConstructionGate(result: ClassifyResult, sourceText: string): ClassifyResult {
+  const stage = resolveConstructionStage(result.project_stage, sourceText);
+  const keep = isActiveConstructionStage(stage);
+  return {
+    ...result,
+    project_stage: stage,
+    exclude: !keep,
+    score: keep ? result.score : Math.min(result.score, 20),
+    recommended_service: keep ? result.recommended_service || "Construction Site Security" : result.recommended_service,
+    reason: keep
+      ? result.reason
+      : result.reason || "No construction project currently underway or starting soon.",
+  };
+}
+
 export async function classifyLead(payload: unknown): Promise<ClassifyResult> {
-  const parsed = await openRouterJson(SYSTEM, JSON.stringify(payload).slice(0, 12000));
+  const blob = JSON.stringify(payload ?? {});
+  const parsed = await openRouterJson(SYSTEM, blob.slice(0, 12000));
   if (!parsed) {
+    const stage = resolveConstructionStage(undefined, blob);
+    const keep = isActiveConstructionStage(stage);
     return {
       company_type: "CONSTRUCTION_COMPANY",
-      recommended_service: "Construction Site Security",
-      score: 50,
-      reason: "LLM unavailable — heuristic placeholder.",
+      recommended_service: keep ? "Construction Site Security" : "General Security",
+      score: keep ? 70 : 20,
+      reason: keep
+        ? `Heuristic: construction looks ${stage}.`
+        : "No construction project currently underway or starting soon.",
       project_type: "UNKNOWN",
-      project_stage: "UNKNOWN",
-      exclude: false,
+      project_stage: stage,
+      exclude: !keep,
     };
   }
-  return OutputSchema.parse(parsed);
+  return applyConstructionGate(OutputSchema.parse(parsed), blob);
 }
 
 const ContactExtractSchema = z.object({
@@ -166,7 +197,12 @@ const PlaceSchema = z.object({
 
 const PLACE_SYSTEM = `From SOURCE TEXT about a property/construction address, extract JSON only:
 {"project_name": string|null, "project_type": string|null, "project_stage": string|null, "companies":[{"name","relationship","website"}]}
-relationship examples: general_contractor, owner, developer, property_manager.
+project_stage must be UNDERWAY, STARTING_SOON, COMPLETED, or NONE.
+- UNDERWAY: active jobsite / under construction
+- STARTING_SOON: groundbreaking, permits, construction to begin within ~6 months
+- COMPLETED: opened, delivered, construction finished
+- NONE: no construction project
+Prefer general contractors, developers, and owners of UNDERWAY or STARTING_SOON work.
 Do not invent companies. Only names clearly stated in the text. Website only if present in the text.`;
 
 export async function extractPlaceEntities(params: { address: string; sourceText: string }) {
@@ -174,6 +210,10 @@ export async function extractPlaceEntities(params: { address: string; sourceText
     PLACE_SYSTEM,
     JSON.stringify({ address: params.address, sourceText: params.sourceText.slice(0, 12000) }),
   );
-  if (!parsed) return { project_name: null, project_type: null, project_stage: null, companies: [] };
-  return PlaceSchema.parse(parsed);
+  if (!parsed) return { project_name: null, project_type: null, project_stage: "NONE", companies: [] };
+  const place = PlaceSchema.parse(parsed);
+  return {
+    ...place,
+    project_stage: resolveConstructionStage(place.project_stage, params.sourceText),
+  };
 }

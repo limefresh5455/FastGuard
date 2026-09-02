@@ -1,8 +1,9 @@
 import { prisma } from "../db/client";
+import { resolveConstructionStage } from "../lib/constructionFit";
 import { classifyLead, extractPlaceEntities } from "../llm/classify";
 import { normalizeCompanyName } from "../lib/normalize";
 import { isPersonName, scoreLead } from "../scoring/scoreLead";
-import { persistContactsForCompany } from "./enrich";
+import { persistContactsForCompany, syncProjectFromClassification } from "./enrich";
 import { gatherCompanyIntel, gatherSourceText, websitePageUrls } from "./fetchPublic";
 import { searchNews } from "./newsSearch";
 import { bumpSource, seedDefaultSources } from "./sources";
@@ -43,11 +44,19 @@ async function finalizeLead(params: {
   const contact = params.contactId ? await prisma.contact.findUnique({ where: { id: params.contactId } }) : null;
   const project = params.projectId ? await prisma.project.findUnique({ where: { id: params.projectId } }) : null;
   const classified = await classifyLead({ company, contact, project, source: params.source });
+  const projectId = await syncProjectFromClassification({
+    companyId: params.companyId,
+    companyName: company?.name || "construction",
+    projectId: params.projectId,
+    city: company?.city,
+    state: company?.state,
+    classified,
+  });
   const scored = scoreLead({
     hasCompany: true,
     hasPersonContact: isPersonName(contact?.firstName, contact?.lastName),
     hasPhoneOrEmail: Boolean(contact?.phone || contact?.email || company?.phone),
-    hasProject: Boolean(project),
+    hasProject: Boolean(projectId),
     hasTrigger: Boolean(params.triggerId),
     companyType: classified.company_type,
     aiScore: classified.exclude ? 0 : classified.score,
@@ -60,13 +69,13 @@ async function finalizeLead(params: {
     where: {
       companyId: params.companyId,
       source: params.source,
-      ...(params.projectId ? { projectId: params.projectId } : {}),
+      ...(projectId ? { projectId } : {}),
     },
   });
   const data = {
     companyId: params.companyId,
     contactId: params.contactId,
-    projectId: params.projectId,
+    projectId,
     triggerId: params.triggerId,
     score: scored.total,
     recommendedService: classified.recommended_service,
@@ -237,10 +246,10 @@ export async function enrichByAddress(input: { address: string; city?: string; s
 
   const news = await searchNews(
     [
-      `"${address}" ${city} ${state} construction`,
-      `"${address}" ${city} developer`,
+      `"${address}" ${city} ${state} under construction`,
+      `"${address}" ${city} groundbreaking`,
       `"${address}" ${city} general contractor`,
-      `"${address}" ${city} property`,
+      `"${address}" ${city} building permit`,
     ],
     5,
   );
@@ -267,7 +276,7 @@ export async function enrichByAddress(input: { address: string; city?: string; s
       city,
       state,
       projectType: place.project_type,
-      projectStage: place.project_stage,
+      projectStage: resolveConstructionStage(place.project_stage, sourceText),
       sourceUrl: gathered.urls[0] || news[0]?.link,
     },
   });
@@ -359,10 +368,9 @@ export async function discoverSignals(input: {
 
   const company = await upsertCompany(name!, { website, city, state });
   const queries = [
-    `"${name}" "${address}" ${city} ${state} construction`,
+    `"${name}" "${address}" ${city} ${state} under construction`,
     `"${name}" ${city} groundbreaking`,
-    `"${address}" ${city} multifamily`,
-    `"${address}" ${city} property management`,
+    `"${address}" ${city} construction underway`,
     `"${name}" ${city} general contractor`,
   ];
   const news = await searchNews(queries, 6);
@@ -382,7 +390,7 @@ export async function discoverSignals(input: {
       city,
       state,
       projectType: place.project_type,
-      projectStage: place.project_stage,
+      projectStage: resolveConstructionStage(place.project_stage, sourceText),
       sourceUrl: gathered.urls[0] || news[0]?.link,
     },
   });

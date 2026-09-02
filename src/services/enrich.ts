@@ -1,5 +1,6 @@
 import { prisma } from "../db/client";
-import { classifyLead, extractContactsFromText } from "../llm/classify";
+import { isActiveConstructionStage, normalizeProjectStage } from "../lib/constructionFit";
+import { classifyLead, extractContactsFromText, type ClassifyResult } from "../llm/classify";
 import { looksLikeCompanyAsContactName, normalizeCompanyName, normalizePhone } from "../lib/normalize";
 import { isPersonName, scoreLead } from "../scoring/scoreLead";
 import {
@@ -186,6 +187,39 @@ async function mergeDuplicateContacts(companyId: string, companyName: string): P
   return people[0]?.id ?? null;
 }
 
+export async function syncProjectFromClassification(params: {
+  companyId: string;
+  companyName: string;
+  projectId?: string | null;
+  city?: string | null;
+  state?: string | null;
+  classified: ClassifyResult;
+}): Promise<string | undefined> {
+  const stage = normalizeProjectStage(params.classified.project_stage);
+  if (params.projectId) {
+    await prisma.project.update({
+      where: { id: params.projectId },
+      data: {
+        projectType: params.classified.project_type,
+        projectStage: stage,
+      },
+    });
+    return params.projectId;
+  }
+  if (!isActiveConstructionStage(stage)) return undefined;
+  const created = await prisma.project.create({
+    data: {
+      companyId: params.companyId,
+      name: `${params.companyName} construction`,
+      city: params.city,
+      state: params.state,
+      projectType: params.classified.project_type,
+      projectStage: stage,
+    },
+  });
+  return created.id;
+}
+
 export async function persistContactsForCompany(params: {
   companyId: string;
   companyName: string;
@@ -298,7 +332,7 @@ export async function enrichLead(id: string) {
     hasCompany: true,
     hasPersonContact: isPersonName(linked?.firstName, linked?.lastName),
     hasPhoneOrEmail: Boolean(linked?.phone || linked?.email || lead.company.phone),
-    hasProject: Boolean(lead.project),
+    hasProject: Boolean(lead.project) || isActiveConstructionStage(classified.project_stage),
     hasTrigger: Boolean(lead.trigger),
     companyType: classified.company_type,
     aiScore: classified.exclude ? 0 : classified.score,
@@ -308,20 +342,20 @@ export async function enrichLead(id: string) {
     where: { id: lead.companyId },
     data: { companyType: classified.company_type },
   });
-  if (lead.projectId) {
-    await prisma.project.update({
-      where: { id: lead.projectId },
-      data: {
-        projectType: classified.project_type,
-        projectStage: classified.project_stage,
-      },
-    });
-  }
+  const projectId = await syncProjectFromClassification({
+    companyId: lead.companyId,
+    companyName: lead.company.name,
+    projectId: lead.projectId,
+    city: lead.company.city,
+    state: lead.company.state,
+    classified,
+  });
 
   const updated = await prisma.lead.update({
     where: { id },
     data: {
       contactId: linkedContactId,
+      projectId,
       score: scored.total,
       recommendedService: classified.recommended_service,
       classified: true,
