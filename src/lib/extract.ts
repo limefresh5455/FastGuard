@@ -16,7 +16,7 @@ const TITLE_RE =
 
 const NAME_PART = "([A-Z][a-z]+|[A-Z]{2,})(?:\\s+(?:de|la|del|van|von|da|di))?\\s+([A-Z][a-z]+(?:[\\s'-][A-Z][a-z]+)?|[A-Z]{2,})";
 
-const SOUTH_FL_CITIES = [
+export const SOUTH_FL_CITIES = [
   "Miami",
   "Miami Beach",
   "Coral Gables",

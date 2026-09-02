@@ -10,6 +10,7 @@ export async function leadRoutes(app: FastifyInstance) {
         summary: "Enrich contacts, AI classify, score 0–100",
         description: [
           "Step 3 of the MVP. Processes up to `limit` leads that are not classified or have no contact.",
+          "Optional **location** (e.g. `\"South Florida\"` or `\"Miami\"`) limits enrichment to companies/projects in that area.",
           "Fetches company websites and news, extracts people with the LLM, and **upserts** Contact rows (no duplicate company-name contacts).",
           "Requires OPENROUTER_API_KEY. Does not invent emails or names.",
         ].join("\n"),
@@ -22,13 +23,18 @@ export async function leadRoutes(app: FastifyInstance) {
               description: "How many leads to process (default 50)",
               default: 50,
             },
+            location: {
+              type: "string",
+              description: 'Region or city to enrich, e.g. "South Florida" or "Miami"',
+              examples: ["South Florida"],
+            },
           },
         },
       },
     },
     async (req) => {
-      const q = (req.body as { limit?: number }) ?? {};
-      return enrichUnclassified(q.limit ?? 50);
+      const q = (req.body as { limit?: number; location?: string }) ?? {};
+      return enrichUnclassified(q.limit ?? 50, q.location);
     },
   );
 }

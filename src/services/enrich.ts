@@ -8,6 +8,7 @@ import {
   moneyInText,
   nameFromEmail,
   peopleFromText,
+  SOUTH_FL_CITIES,
   splitFullName,
   type PersonHit,
 } from "../lib/extract";
@@ -376,14 +377,14 @@ export async function persistContactsForCompany(params: {
   };
 }
 
-export async function enrichLead(id: string) {
+export async function enrichLead(id: string, location?: string) {
   const lead = await prisma.lead.findUnique({ where: { id }, include });
   if (!lead) return null;
 
   const intel = await gatherCompanyIntel({
     name: lead.company.name,
     website: lead.company.website,
-    city: lead.company.city,
+    city: location?.trim() || lead.company.city,
     extraUrls: [
       websiteFromEmail(lead.contact?.email),
       lead.project?.sourceUrl,
@@ -486,7 +487,9 @@ export async function enrichLead(id: string) {
   return { ...updated, contactsSaved: saved };
 }
 
-export async function enrichUnclassified(limit = 50) {
+export async function enrichUnclassified(limit = 50, location?: string) {
+  const loc = location?.trim();
+  const cities = loc ? (/south\s*florida/i.test(loc) ? [loc, ...SOUTH_FL_CITIES] : [loc]) : [];
   const ids = await prisma.lead.findMany({
     where: {
       status: { not: "EXCLUDED" },
@@ -495,6 +498,14 @@ export async function enrichUnclassified(limit = 50) {
           AND: [{ firstName: { not: null } }, { lastName: { not: null } }],
         },
       },
+      ...(cities.length
+        ? {
+            OR: cities.flatMap((city) => [
+              { company: { city: { contains: city, mode: "insensitive" as const } } },
+              { project: { city: { contains: city, mode: "insensitive" as const } } },
+            ]),
+          }
+        : {}),
     },
     take: limit,
     select: { id: true },
@@ -504,12 +515,12 @@ export async function enrichUnclassified(limit = 50) {
   const errors: string[] = [];
   for (const row of ids) {
     try {
-      const out = await enrichLead(row.id);
+      const out = await enrichLead(row.id, loc);
       contactsSaved += out && "contactsSaved" in out ? Number(out.contactsSaved) : 0;
     } catch (err) {
       failed += 1;
       errors.push(err instanceof Error ? err.message : String(err));
     }
   }
-  return { processed: ids.length, contactsSaved, failed, errors: errors.slice(0, 5) };
+  return { processed: ids.length, contactsSaved, failed, errors: errors.slice(0, 5), location: loc || null };
 }
