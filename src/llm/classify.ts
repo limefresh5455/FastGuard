@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { z } from "zod";
 import { env, openRouterKey } from "../config/env";
 import { isActiveConstructionStage, resolveConstructionStage } from "../lib/constructionFit";
+import { mergePeople, normalizeLooseContact, type PersonHit } from "../lib/extract";
 
 const OutputSchema = z.object({
   company_type: z.string().catch("OTHER"),
@@ -134,37 +135,98 @@ export async function classifyLead(payload: unknown): Promise<ClassifyResult> {
 }
 
 const ContactExtractSchema = z.object({
+  company_name: z.string().nullable().optional(),
   website: z.string().nullable().optional(),
   company_phone: z.string().nullable().optional(),
   city: z.string().nullable().optional(),
+  state: z.string().nullable().optional(),
   company_type: z.string().nullable().optional(),
-  contacts: z
-    .array(
-      z.object({
-        firstName: z.string().nullable().optional(),
-        lastName: z.string().nullable().optional(),
-        title: z.string().nullable().optional(),
-        email: z.string().nullable().optional(),
-        phone: z.string().nullable().optional(),
-      }),
-    )
-    .default([]),
+  project_name: z.string().nullable().optional(),
+  project_type: z.string().nullable().optional(),
+  project_stage: z.string().nullable().optional(),
+  project_address: z.string().nullable().optional(),
+  project_city: z.string().nullable().optional(),
+  project_value: z.coerce.number().nullable().optional(),
+  contacts: z.preprocess((v) => {
+    if (Array.isArray(v)) return v;
+    if (v && typeof v === "object") return Object.values(v as Record<string, unknown>);
+    return [];
+  }, z.array(z.unknown()).default([])),
 });
 
-export type ExtractedContacts = z.infer<typeof ContactExtractSchema>;
+export type ExtractedContacts = {
+  company_name: string | null;
+  website: string | null;
+  company_phone: string | null;
+  city: string | null;
+  state: string | null;
+  company_type: string | null;
+  project_name: string | null;
+  project_type: string | null;
+  project_stage: string | null;
+  project_address: string | null;
+  project_city: string | null;
+  project_value: number | null;
+  contacts: PersonHit[];
+};
 
-const CONTACT_SYSTEM = `You extract real people and contact details for a South Florida construction or property company.
-Return JSON only:
-{"website": string|null, "company_phone": string|null, "city": string|null, "company_type": string|null, "contacts":[{"firstName","lastName","title","email","phone"}]}
+const emptyProfile = (): ExtractedContacts => ({
+  company_name: null,
+  website: null,
+  company_phone: null,
+  city: null,
+  state: null,
+  company_type: null,
+  project_name: null,
+  project_type: null,
+  project_stage: null,
+  project_address: null,
+  project_city: null,
+  project_value: null,
+  contacts: [],
+});
+
+const CONTACT_SYSTEM = `You extract real people and company/project facts for a South Florida construction firm.
+Return JSON only with this shape:
+{"company_name": string|null, "website": string|null, "company_phone": string|null, "city": string|null, "state": string|null, "company_type": string|null, "project_name": string|null, "project_type": string|null, "project_stage": string|null, "project_address": string|null, "project_city": string|null, "project_value": number|null, "contacts":[{"firstName","lastName","title","email","phone"}]}
+
 Rules:
-- Never add the company itself (or a news headline) as a contact — only individual people.
-- Prefer facts from SOURCE TEXT. Do not invent emails, phones, or people.
-- A named person with a job title in the text SHOULD be included even if email/phone is missing.
-- Split names: firstName and lastName as separate fields (never put the full name only in firstName).
-- Prefer decision makers: Project Superintendent, Project Manager, Property Manager, Director of Operations, Owner, President.
-- If an email is present without a name, still include it.
-- website must be http(s) if found. company_type one of GENERAL_CONTRACTOR, DEVELOPER, PROPERTY_MANAGER, CONSTRUCTION_COMPANY, OTHER.
-- Empty contacts is OK when the text has no people.`;
+- contacts must be individual people (never the company, a newspaper, or a headline).
+- ALWAYS split the person's name: firstName and lastName as separate fields. Also fill title when stated.
+- A named person with a job title SHOULD be included even if email/phone is missing.
+- News quotes count: "said Maria Lopez, project manager" is a contact.
+- Prefer decision makers: Project Superintendent, Project Manager, Director of Operations, Owner, President, VP, Principal.
+- Do not invent emails, phones, or people. Empty contacts is OK when the text has no people.
+- Do not add info@, sales@, office@, contact@ as contacts unless you also have a real first and last name.
+- company_name should be the legal/trade name of the contractor, developer, or owner — not a news headline.
+- project_stage: UNDERWAY, STARTING_SOON, COMPLETED, or NONE.
+- company_type: GENERAL_CONTRACTOR, DEVELOPER, PROPERTY_MANAGER, CONSTRUCTION_COMPANY, OTHER.
+- website must be http(s) if found.`;
+
+function toProfile(parsed: unknown, sourceText: string): ExtractedContacts {
+  const ok = ContactExtractSchema.safeParse(parsed);
+  const base = emptyProfile();
+  if (!ok.success) {
+    return { ...base, contacts: mergePeople([], []) };
+  }
+  const d = ok.data;
+  const contacts = mergePeople(d.contacts.map(normalizeLooseContact).filter(Boolean) as PersonHit[]);
+  return {
+    company_name: d.company_name ?? null,
+    website: d.website ?? null,
+    company_phone: d.company_phone ?? null,
+    city: d.city ?? null,
+    state: d.state ?? null,
+    company_type: d.company_type ?? null,
+    project_name: d.project_name ?? null,
+    project_type: d.project_type ?? null,
+    project_stage: resolveConstructionStage(d.project_stage, sourceText),
+    project_address: d.project_address ?? null,
+    project_city: d.project_city ?? null,
+    project_value: d.project_value ?? null,
+    contacts,
+  };
+}
 
 export async function extractContactsFromText(params: {
   companyName: string;
@@ -174,10 +236,8 @@ export async function extractContactsFromText(params: {
     CONTACT_SYSTEM,
     JSON.stringify({ companyName: params.companyName, sourceText: params.sourceText.slice(0, 12000) }),
   );
-  if (!parsed) return { website: null, company_phone: null, city: null, company_type: null, contacts: [] };
-  const ok = ContactExtractSchema.safeParse(parsed);
-  if (!ok.success) return { website: null, company_phone: null, city: null, company_type: null, contacts: [] };
-  return ok.data;
+  if (!parsed) return emptyProfile();
+  return toProfile(parsed, params.sourceText);
 }
 
 const PlaceSchema = z.object({

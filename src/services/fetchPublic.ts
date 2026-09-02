@@ -1,4 +1,5 @@
 import { env } from "../config/env";
+import { mergePeople, peopleFromHtml, peopleFromText, urlsInText, type PersonHit } from "../lib/extract";
 import { normalizePhone } from "../lib/normalize";
 import { searchNews } from "./newsSearch";
 
@@ -29,7 +30,7 @@ export function phonesInText(text: string): string[] {
   return [...new Set(raw.map((p) => normalizePhone(p)).filter(Boolean) as string[])];
 }
 
-export async function fetchPublicPage(url: string): Promise<{ url: string; text: string } | null> {
+export async function fetchPublicPage(url: string): Promise<{ url: string; text: string; html: string } | null> {
   if (!url.startsWith("http")) return null;
   try {
     const res = await fetch(url, {
@@ -45,7 +46,7 @@ export async function fetchPublicPage(url: string): Promise<{ url: string; text:
     const html = (await res.text()).slice(0, 250_000);
     const text = stripHtml(html).slice(0, 14000);
     if (text.length < 40) return null;
-    return { url: finalUrl, text };
+    return { url: finalUrl, text, html };
   } catch {
     return null;
   }
@@ -60,7 +61,18 @@ export function websitePageUrls(website?: string | null): string[] {
   if (!website) return [];
   const base = website.startsWith("http") ? website : `https://${website}`;
   const root = base.replace(/\/$/, "");
-  return [root, `${root}/contact`, `${root}/about`, `${root}/team`];
+  return [
+    root,
+    `${root}/contact`,
+    `${root}/contact-us`,
+    `${root}/about`,
+    `${root}/about-us`,
+    `${root}/team`,
+    `${root}/our-team`,
+    `${root}/leadership`,
+    `${root}/people`,
+    `${root}/staff`,
+  ];
 }
 
 export function websiteFromEmail(email?: string | null): string | null {
@@ -87,23 +99,41 @@ export async function searchHomepageUrls(companyName: string): Promise<string[]>
       }
     });
     const hrefs = [...html.matchAll(/https?:\/\/[^\s"'<>]+/g)].map((m) => m[0]);
-    return [...new Set([...encoded, ...hrefs])].filter((u) => isOfficialWebsite(u)).slice(0, 4);
+    return [...new Set([...encoded, ...hrefs])].filter((u) => isOfficialWebsite(u)).slice(0, 5);
   } catch {
     return [];
   }
 }
 
-export async function gatherSourceText(urls: Array<string | null | undefined>): Promise<{ urls: string[]; text: string }> {
+export async function gatherSourceText(urls: Array<string | null | undefined>): Promise<{
+  urls: string[];
+  text: string;
+  people: PersonHit[];
+  emails: string[];
+  phones: string[];
+}> {
   const unique = [...new Set(urls.filter(Boolean) as string[])];
   const parts: string[] = [];
   const used: string[] = [];
-  for (const url of unique.slice(0, 8)) {
+  const people: PersonHit[] = [];
+  const emails: string[] = [];
+  const phones: string[] = [];
+  for (const url of unique.slice(0, 10)) {
     const page = await fetchPublicPage(url);
     if (!page) continue;
     used.push(page.url);
     parts.push(`SOURCE ${page.url}\n${page.text}`);
+    people.push(...peopleFromHtml(page.html), ...peopleFromText(page.text));
+    emails.push(...emailsInText(page.text));
+    phones.push(...phonesInText(page.text));
   }
-  return { urls: used, text: parts.join("\n\n").slice(0, 20000) };
+  return {
+    urls: used,
+    text: parts.join("\n\n").slice(0, 24000),
+    people: mergePeople(people),
+    emails: [...new Set(emails)],
+    phones: [...new Set(phones)],
+  };
 }
 
 export async function gatherCompanyIntel(params: {
@@ -111,32 +141,56 @@ export async function gatherCompanyIntel(params: {
   website?: string | null;
   city?: string | null;
   extraUrls?: Array<string | null | undefined>;
-}): Promise<{ text: string; urls: string[]; website: string | null }> {
+}): Promise<{
+  text: string;
+  urls: string[];
+  website: string | null;
+  people: PersonHit[];
+  emails: string[];
+  phones: string[];
+}> {
   const city = params.city?.trim() || "South Florida";
   const homepages = await searchHomepageUrls(params.name);
   const news = await searchNews(
     [
       `"${params.name}" official website`,
-      `"${params.name}" contact email phone`,
+      `"${params.name}" ${city} "project manager" OR superintendent OR president`,
+      `"${params.name}" ${city} leadership team contact`,
       `"${params.name}" ${city} under construction`,
       `"${params.name}" ${city} groundbreaking`,
-      `"${params.name}" ${city} construction`,
     ],
     4,
   );
-  const knownSite = [params.website, ...homepages].find((u) => isOfficialWebsite(u ?? null)) ?? null;
+  const newsUrls = news.flatMap((n) => [n.link, ...urlsInText(`${n.title} ${n.description}`)]);
+  const knownSite =
+    [params.website, ...homepages, ...newsUrls.map((u) => (isOfficialWebsite(u) ? u : null))].find((u) =>
+      isOfficialWebsite(u ?? null),
+    ) ?? null;
   const gathered = await gatherSourceText([
     ...websitePageUrls(knownSite),
     ...homepages,
     ...(params.extraUrls ?? []),
     ...news.map((n) => n.link),
   ]);
+  const people = mergePeople(gathered.people, peopleFromText(news.map((n) => `${n.title} ${n.description}`).join("\n")));
   const text = [
     `Company: ${params.name}. Location: ${city}. Website: ${knownSite || "unknown"}.`,
     "Determine whether this company has a construction project currently underway or starting soon.",
-    "Extract real people only (firstName, lastName, title, email, phone). Do not treat the company name as a contact.",
+    "Extract real people with firstName, lastName, and title. Do not treat the company name as a contact.",
+    people.length
+      ? `People already found on pages:\n${people.map((p) => [p.firstName, p.lastName, p.title, p.email, p.phone].filter(Boolean).join(" | ")).join("\n")}`
+      : "",
     news.map((n) => `${n.title}\n${n.description}\n${n.link}`).join("\n"),
     gathered.text,
-  ].join("\n\n");
-  return { text, urls: gathered.urls, website: knownSite };
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  return {
+    text,
+    urls: gathered.urls,
+    website: knownSite,
+    people,
+    emails: gathered.emails,
+    phones: gathered.phones,
+  };
 }

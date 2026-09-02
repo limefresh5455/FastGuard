@@ -1,6 +1,7 @@
 import { env } from "../config/env";
 import { prisma } from "../db/client";
 import { inferNewsProjectStage, isActiveConstructionStage } from "../lib/constructionFit";
+import { companyNameFromNews } from "../lib/extract";
 import { normalizeCompanyName } from "../lib/normalize";
 import { scoreLead } from "../scoring/scoreLead";
 import { bumpSource } from "./sources";
@@ -106,7 +107,7 @@ export async function discoverByLocation(location: string) {
       skipped += 1;
       continue;
     }
-    const companyName = hit.title.split(/[:\-–|]/)[0].slice(0, 120).trim() || hit.title.slice(0, 80);
+    const companyName = companyNameFromNews(hit.title, hit.description);
     const normalizedName = normalizeCompanyName(companyName);
     let company = await prisma.company.findFirst({ where: { normalizedName } });
     if (!company) {

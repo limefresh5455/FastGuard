@@ -1,6 +1,17 @@
 import { prisma } from "../db/client";
 import { isActiveConstructionStage, normalizeProjectStage } from "../lib/constructionFit";
-import { classifyLead, extractContactsFromText, type ClassifyResult } from "../llm/classify";
+import {
+  cityFromText,
+  isGenericEmail,
+  looksLikeNewsHeadline,
+  mergePeople,
+  moneyInText,
+  nameFromEmail,
+  peopleFromText,
+  splitFullName,
+  type PersonHit,
+} from "../lib/extract";
+import { classifyLead, extractContactsFromText, type ClassifyResult, type ExtractedContacts } from "../llm/classify";
 import { looksLikeCompanyAsContactName, normalizeCompanyName, normalizePhone } from "../lib/normalize";
 import { isPersonName, scoreLead } from "../scoring/scoreLead";
 import {
@@ -34,17 +45,12 @@ function rankTitle(title?: string | null): number {
   return i === -1 ? 99 : i;
 }
 
-function splitPersonName(first?: string | null, last?: string | null): { firstName: string | null; lastName: string | null } {
-  let firstName = first?.trim() || null;
-  let lastName = last?.trim() || null;
-  if (firstName && !lastName) {
-    const parts = firstName.split(/\s+/).filter(Boolean);
-    if (parts.length >= 2) {
-      firstName = parts[0];
-      lastName = parts.slice(1).join(" ");
-    }
+function splitPersonName(first?: string | null, last?: string | null): { firstName: string | null; lastName: string | null; title: string | null } {
+  if (first && last) {
+    const titled = splitFullName(`${first} ${last}`);
+    return { firstName: titled.firstName || first, lastName: titled.lastName || last, title: titled.title };
   }
-  return { firstName, lastName };
+  return splitFullName(first || last || "");
 }
 
 function contactLabel(first?: string | null, last?: string | null): string {
@@ -98,14 +104,16 @@ async function upsertContact(
   const email = data.email?.toLowerCase().trim() || null;
   if (email && /prnewswire|businesswire|globenewswire|sentry\.|example\.com/.test(email)) return null;
   const phone = normalizePhone(data.phone);
-  const { firstName, lastName } = splitPersonName(data.firstName, data.lastName);
-  const title = data.title?.trim() || null;
+  const split = splitPersonName(data.firstName, data.lastName);
+  const inferred = nameFromEmail(email);
+  const firstName = split.firstName || inferred?.firstName || null;
+  const lastName = split.lastName || inferred?.lastName || null;
+  const title = data.title?.trim() || split.title || null;
   const label = contactLabel(firstName, lastName);
 
-  if (label && isCompanyNameContact(label, companyName)) {
-    if (!email) return null;
-  }
+  if (label && isCompanyNameContact(label, companyName) && !email) return null;
   const hasPerson = Boolean(firstName && lastName) && !isCompanyNameContact(label, companyName);
+  if (!hasPerson && isGenericEmail(email)) return null;
   if (!email && !hasPerson) return null;
 
   const existing = await findExistingContact(companyId, { email, firstName, lastName });
@@ -178,13 +186,24 @@ async function mergeDuplicateContacts(companyId: string, companyName: string): P
   }
 
   const people = await prisma.contact.findMany({ where: { companyId } });
-  people.sort((a, b) => {
+  for (const c of people) {
+    if (!c.firstName && !c.lastName && isGenericEmail(c.email)) {
+      await prisma.lead.updateMany({ where: { contactId: c.id }, data: { contactId: null } });
+      await prisma.contact.delete({ where: { id: c.id } });
+    }
+  }
+
+  const remaining = await prisma.contact.findMany({ where: { companyId } });
+  remaining.sort((a, b) => {
     const aPerson = isPersonName(a.firstName, a.lastName) ? 0 : 1;
     const bPerson = isPersonName(b.firstName, b.lastName) ? 0 : 1;
     if (aPerson !== bPerson) return aPerson - bPerson;
+    const aFilled = [a.firstName, a.lastName, a.title, a.email].filter(Boolean).length;
+    const bFilled = [b.firstName, b.lastName, b.title, b.email].filter(Boolean).length;
+    if (aFilled !== bFilled) return bFilled - aFilled;
     return rankTitle(a.title) - rankTitle(b.title);
   });
-  return people[0]?.id ?? null;
+  return remaining[0]?.id ?? null;
 }
 
 export async function syncProjectFromClassification(params: {
@@ -194,31 +213,76 @@ export async function syncProjectFromClassification(params: {
   city?: string | null;
   state?: string | null;
   classified: ClassifyResult;
+  extras?: {
+    name?: string | null;
+    address?: string | null;
+    city?: string | null;
+    projectType?: string | null;
+    projectStage?: string | null;
+    projectValue?: number | null;
+    sourceUrl?: string | null;
+  };
 }): Promise<string | undefined> {
-  const stage = normalizeProjectStage(params.classified.project_stage);
+  const stage =
+    normalizeProjectStage(params.extras?.projectStage) || normalizeProjectStage(params.classified.project_stage);
+  const projectType = params.extras?.projectType || params.classified.project_type;
+  const city = params.extras?.city || params.city;
+  const address = params.extras?.address || undefined;
+  const projectValue = params.extras?.projectValue ?? undefined;
+  const betterName = params.extras?.name?.trim();
+
   if (params.projectId) {
+    const existing = await prisma.project.findUnique({ where: { id: params.projectId } });
+    if (!existing) return undefined;
     await prisma.project.update({
-      where: { id: params.projectId },
+      where: { id: existing.id },
       data: {
-        projectType: params.classified.project_type,
-        projectStage: stage,
+        projectType: projectType || existing.projectType,
+        projectStage: stage || existing.projectStage,
+        address: address || existing.address,
+        city: city || existing.city,
+        projectValue: projectValue ?? existing.projectValue,
+        sourceUrl: params.extras?.sourceUrl || existing.sourceUrl,
+        name:
+          betterName && (looksLikeNewsHeadline(existing.name) || / construction$/i.test(existing.name))
+            ? betterName
+            : existing.name,
       },
     });
-    return params.projectId;
+    return existing.id;
   }
   if (!isActiveConstructionStage(stage)) return undefined;
   const created = await prisma.project.create({
     data: {
       companyId: params.companyId,
-      name: `${params.companyName} construction`,
-      city: params.city,
+      name: betterName || `${params.companyName} construction`,
+      address,
+      city,
       state: params.state,
-      projectType: params.classified.project_type,
+      projectType,
       projectStage: stage,
+      projectValue,
+      sourceUrl: params.extras?.sourceUrl,
     },
   });
   return created.id;
 }
+
+const EMPTY_PROFILE: ExtractedContacts = {
+  company_name: null,
+  website: null,
+  company_phone: null,
+  city: null,
+  state: null,
+  company_type: null,
+  project_name: null,
+  project_type: null,
+  project_stage: null,
+  project_address: null,
+  project_city: null,
+  project_value: null,
+  contacts: [],
+};
 
 export async function persistContactsForCompany(params: {
   companyId: string;
@@ -227,41 +291,62 @@ export async function persistContactsForCompany(params: {
   phone?: string | null;
   sourceUrls: string[];
   pageText: string;
-}): Promise<{ contactId: string | null; saved: number }> {
+  extraPeople?: PersonHit[];
+}): Promise<{ contactId: string | null; saved: number; profile: ExtractedContacts }> {
+  const company = await prisma.company.findUnique({ where: { id: params.companyId } });
+  if (!company) return { contactId: null, saved: 0, profile: EMPTY_PROFILE };
+
   const regexEmails = emailsInText(params.pageText);
   const regexPhones = phonesInText(params.pageText);
   const extracted = params.pageText
     ? await extractContactsFromText({ companyName: params.companyName, sourceText: params.pageText })
-    : { website: null, company_phone: null, city: null, company_type: null, contacts: [] };
+    : EMPTY_PROFILE;
+
+  const heuristicPeople = mergePeople(extracted.contacts, params.extraPeople ?? [], peopleFromText(params.pageText));
+  for (const email of regexEmails) {
+    if (isGenericEmail(email)) continue;
+    if (heuristicPeople.some((c) => (c.email ?? "").toLowerCase() === email)) continue;
+    const inferred = nameFromEmail(email);
+    heuristicPeople.push({
+      email,
+      firstName: inferred?.firstName ?? null,
+      lastName: inferred?.lastName ?? null,
+      title: null,
+      phone: null,
+    });
+  }
 
   const website = isOfficialWebsite(extracted.website)
     ? extracted.website
     : isOfficialWebsite(params.website)
       ? params.website
-      : websiteFromEmail(regexEmails[0]);
+      : websiteFromEmail(regexEmails.find((e) => !isGenericEmail(e)) ?? regexEmails[0]);
   const companyPhone = normalizePhone(extracted.company_phone) || regexPhones[0] || params.phone;
+  const city = extracted.city || cityFromText(params.pageText) || company.city;
+  const betterName = extracted.company_name?.trim();
+  const rename =
+    Boolean(betterName) &&
+    looksLikeNewsHeadline(company.name) &&
+    !looksLikeNewsHeadline(betterName!) &&
+    betterName!.length > 3;
 
   await prisma.company.update({
-    where: { id: params.companyId },
+    where: { id: company.id },
     data: {
+      ...(rename ? { name: betterName, normalizedName: normalizeCompanyName(betterName!) } : {}),
       website: website || undefined,
       phone: companyPhone || undefined,
-      city: extracted.city || undefined,
-      companyType: extracted.company_type || undefined,
+      city: city || undefined,
+      state: extracted.state || company.state || "FL",
+      companyType:
+        extracted.company_type && extracted.company_type !== "OTHER" ? extracted.company_type : undefined,
       sourceUrl: params.sourceUrls.find((u) => isOfficialWebsite(u)) || undefined,
     },
   });
 
-  const merged = [...extracted.contacts];
-  for (const email of regexEmails) {
-    if (!merged.some((c) => (c.email ?? "").toLowerCase() === email)) {
-      merged.push({ email, firstName: null, lastName: null, title: null, phone: null });
-    }
-  }
-
   const ids: string[] = [];
-  for (const c of merged) {
-    const id = await upsertContact(params.companyId, params.companyName, {
+  for (const c of heuristicPeople) {
+    const id = await upsertContact(params.companyId, betterName || params.companyName, {
       ...c,
       phone: c.phone || companyPhone,
       sourceUrl: params.sourceUrls[0],
@@ -269,16 +354,26 @@ export async function persistContactsForCompany(params: {
     if (id) ids.push(id);
   }
 
-  const contactId = await mergeDuplicateContacts(params.companyId, params.companyName);
+  const contactId = await mergeDuplicateContacts(params.companyId, betterName || params.companyName);
 
   if (companyPhone) {
     await prisma.contact.updateMany({
-      where: { companyId: params.companyId, phone: null },
+      where: { companyId: params.companyId, phone: null, NOT: { firstName: null } },
       data: { phone: companyPhone },
     });
   }
 
-  return { contactId, saved: [...new Set(ids)].length };
+  return {
+    contactId,
+    saved: [...new Set(ids)].length,
+    profile: {
+      ...extracted,
+      contacts: heuristicPeople,
+      city: city ?? null,
+      company_phone: companyPhone ?? null,
+      website: website ?? null,
+    },
+  };
 }
 
 export async function enrichLead(id: string) {
@@ -305,22 +400,30 @@ export async function enrichLead(id: string) {
     .filter(Boolean)
     .join("\n");
 
-  const { contactId, saved } = await persistContactsForCompany({
+  const { contactId, saved, profile } = await persistContactsForCompany({
     companyId: lead.companyId,
     companyName: lead.company.name,
     website: intel.website || lead.company.website,
     phone: lead.company.phone,
     sourceUrls: intel.urls,
     pageText: [existingBits, intel.text].filter(Boolean).join("\n\n"),
+    extraPeople: intel.people,
   });
 
+  const freshCompany = await prisma.company.findUnique({ where: { id: lead.companyId } });
   const classified = await classifyLead({
-    company: lead.company,
+    company: freshCompany || lead.company,
     contact: lead.contact,
     project: lead.project,
     trigger: lead.trigger,
     source: lead.source,
-    extractedPagePreview: intel.text.slice(0, 2000),
+    extractedPagePreview: intel.text.slice(0, 4000),
+    extractedProfile: {
+      company_name: profile.company_name,
+      project_name: profile.project_name,
+      project_stage: profile.project_stage,
+      project_type: profile.project_type,
+    },
   });
 
   const linkedContactId = contactId || lead.contactId;
@@ -331,24 +434,40 @@ export async function enrichLead(id: string) {
   const scored = scoreLead({
     hasCompany: true,
     hasPersonContact: isPersonName(linked?.firstName, linked?.lastName),
-    hasPhoneOrEmail: Boolean(linked?.phone || linked?.email || lead.company.phone),
+    hasPhoneOrEmail: Boolean(linked?.phone || linked?.email || freshCompany?.phone || lead.company.phone),
     hasProject: Boolean(lead.project) || isActiveConstructionStage(classified.project_stage),
     hasTrigger: Boolean(lead.trigger),
     companyType: classified.company_type,
     aiScore: classified.exclude ? 0 : classified.score,
   });
 
-  await prisma.company.update({
-    where: { id: lead.companyId },
-    data: { companyType: classified.company_type },
-  });
+  if (freshCompany) {
+    await prisma.company.update({
+      where: { id: freshCompany.id },
+      data: {
+        companyType:
+          classified.company_type && classified.company_type !== "OTHER"
+            ? classified.company_type
+            : undefined,
+      },
+    });
+  }
   const projectId = await syncProjectFromClassification({
     companyId: lead.companyId,
-    companyName: lead.company.name,
+    companyName: freshCompany?.name || lead.company.name,
     projectId: lead.projectId,
-    city: lead.company.city,
-    state: lead.company.state,
+    city: profile.project_city || freshCompany?.city || lead.company.city,
+    state: freshCompany?.state || lead.company.state,
     classified,
+    extras: {
+      name: profile.project_name,
+      address: profile.project_address,
+      city: profile.project_city,
+      projectType: profile.project_type,
+      projectStage: profile.project_stage,
+      projectValue: profile.project_value ?? moneyInText(intel.text),
+      sourceUrl: intel.urls[0],
+    },
   });
 
   const updated = await prisma.lead.update({
@@ -373,7 +492,7 @@ export async function enrichUnclassified(limit = 50) {
       status: { not: "EXCLUDED" },
       NOT: {
         contact: {
-          AND: [{ email: { not: null } }, { firstName: { not: null } }, { lastName: { not: null } }],
+          AND: [{ firstName: { not: null } }, { lastName: { not: null } }],
         },
       },
     },

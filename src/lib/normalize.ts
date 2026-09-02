@@ -23,8 +23,18 @@ export function normalizePhone(raw?: string | null): string | null {
 
 export function looksLikeCompanyAsContactName(name?: string | null): boolean {
   if (!name?.trim()) return true;
-  if (/\b(llc|inc|corp|company|construction|management|security|properties|holdings|partners|associates|realty|development)\b/i.test(name)) return true;
-  return name.trim().split(/\s+/).length < 2;
+  const n = name.trim();
+  if (/\b(llc|inc\.?|corp\.?|ltd\.?|incorporated|corporation)\b/i.test(n)) return true;
+  if (/^(mr|mrs|ms|dr|sir)\.?$/i.test(n)) return true;
+  if (
+    /^(project manager|superintendent|president|owner|principal|director of operations|vice president|ceo)$/i.test(
+      n,
+    )
+  ) {
+    return true;
+  }
+  if (/^\S+\s+(construction|management|security|properties|holdings|partners|development)$/i.test(n)) return true;
+  return n.split(/\s+/).length < 2;
 }
 
 export function col(row: Record<string, unknown>, names: string[]): string | undefined {

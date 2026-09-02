@@ -117,6 +117,7 @@ export async function enrichByCompany(input: {
     phone: company.phone,
     sourceUrls: intel.urls,
     pageText,
+    extraPeople: intel.people,
   });
 
   const { lead } = await finalizeLead({
@@ -303,6 +304,7 @@ export async function enrichByAddress(input: { address: string; city?: string; s
       phone: null,
       sourceUrls: gathered.urls,
       pageText: sourceText,
+      extraPeople: gathered.people,
     });
   }
 
@@ -313,6 +315,7 @@ export async function enrichByAddress(input: { address: string; city?: string; s
     phone: company.phone,
     sourceUrls: gathered.urls,
     pageText: sourceText,
+    extraPeople: gathered.people,
   });
 
   const { lead } = await finalizeLead({
@@ -412,6 +415,7 @@ export async function discoverSignals(input: {
     phone: company.phone,
     sourceUrls: gathered.urls,
     pageText: sourceText,
+    extraPeople: gathered.people,
   });
 
   const relatedCompanies: Array<{ id: string; name: string; relationship: string | null | undefined }> = [];
@@ -426,6 +430,7 @@ export async function discoverSignals(input: {
       phone: null,
       sourceUrls: gathered.urls,
       pageText: sourceText,
+      extraPeople: gathered.people,
     });
   }
 
