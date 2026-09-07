@@ -4,10 +4,18 @@ import { z } from "zod";
 function applyHostedPostgresEnv() {
   if (!process.env.DATABASE_URL) {
     process.env.DATABASE_URL =
-      process.env.POSTGRES_PRISMA_URL || process.env.POSTGRES_URL || process.env.POSTGRES_DATABASE_URL || "";
+      process.env.POSTGRES_PRISMA_URL ||
+      process.env.POSTGRES_URL ||
+      process.env.POSTGRES_DATABASE_URL ||
+      process.env.PRISMA_DATABASE_URL ||
+      "";
   }
   if (!process.env.DIRECT_URL) {
-    process.env.DIRECT_URL = process.env.POSTGRES_URL_NON_POOLING || process.env.DATABASE_URL || "";
+    process.env.DIRECT_URL =
+      process.env.POSTGRES_URL_NON_POOLING ||
+      process.env.DATABASE_URL_UNPOOLED ||
+      process.env.DATABASE_URL ||
+      "";
   }
 }
 applyHostedPostgresEnv();
@@ -36,6 +44,7 @@ export const QUALIFIED_SCORE = 60;
 export function prismaRuntimeUrl(raw: string): string {
   try {
     const u = new URL(raw);
+    if (u.protocol.startsWith("prisma")) return raw;
     const local = u.hostname === "localhost" || u.hostname === "127.0.0.1";
     if (!local) {
       if (!u.searchParams.has("sslmode")) u.searchParams.set("sslmode", "require");

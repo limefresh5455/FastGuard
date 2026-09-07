@@ -22,9 +22,14 @@ Set `OPENROUTER_API_KEY` in `.env` for classification. Default model is `nvidia/
 1. Push this repo to GitHub.
 2. Go to [vercel.com](https://vercel.com) → **Add New Project** → import the repo.
 3. Framework Preset: **Other**. Vercel will use `api/index.ts`.
-4. Create Postgres:
-   - **Storage → Create Database → Postgres** (Neon), then **Connect** it to this project.
-   - That injects `POSTGRES_PRISMA_URL` and `POSTGRES_URL_NON_POOLING`. The app maps those to `DATABASE_URL` and `DIRECT_URL`.
+4. Connect Prisma Postgres to the project (**Storage** → your database → **Connect Project**):
+   - **Project:** `fast-guard`
+   - **Environments:** All Environments
+   - **Custom Environment Variable Prefix:** type only `DATABASE` (the form adds `_URL`, so Vercel creates `DATABASE_URL`)
+   - Turn **Sensitive** on
+   - Click **Connect Project**
+
+   Do **not** paste a connection string (especially not `localhost`) into the prefix field. Prisma Postgres will inject the hosted URL for you.
 5. In **Settings → Environment Variables**, also add:
    - `OPENROUTER_API_KEY` — your OpenRouter key (needed for contact enrichment)
    - `OPENROUTER_MODEL` — `nvidia/nemotron-3.5-lightning:free` (optional)
