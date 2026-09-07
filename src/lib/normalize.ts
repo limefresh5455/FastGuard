@@ -36,12 +36,3 @@ export function looksLikeCompanyAsContactName(name?: string | null): boolean {
   if (/^\S+\s+(construction|management|security|properties|holdings|partners|development)$/i.test(n)) return true;
   return n.split(/\s+/).length < 2;
 }
-
-export function col(row: Record<string, unknown>, names: string[]): string | undefined {
-  const keys = Object.keys(row);
-  for (const n of names) {
-    const k = keys.find((x) => x.toLowerCase().replace(/\s+/g, "") === n.toLowerCase().replace(/\s+/g, ""));
-    if (k && row[k] != null && String(row[k]).trim()) return String(row[k]).trim();
-  }
-  return undefined;
-}

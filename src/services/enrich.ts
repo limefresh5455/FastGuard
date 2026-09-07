@@ -513,14 +513,24 @@ export async function enrichUnclassified(limit = 50, location?: string) {
   let contactsSaved = 0;
   let failed = 0;
   const errors: string[] = [];
+  const companies: string[] = [];
   for (const row of ids) {
     try {
       const out = await enrichLead(row.id, loc);
       contactsSaved += out && "contactsSaved" in out ? Number(out.contactsSaved) : 0;
+      const name = out && "company" in out ? out.company?.name : null;
+      if (name) companies.push(name);
     } catch (err) {
       failed += 1;
       errors.push(err instanceof Error ? err.message : String(err));
     }
   }
-  return { processed: ids.length, contactsSaved, failed, errors: errors.slice(0, 5), location: loc || null };
+  return {
+    processed: ids.length,
+    contactsSaved,
+    failed,
+    errors: errors.slice(0, 5),
+    location: loc || null,
+    names: companies,
+  };
 }

@@ -1,7 +1,28 @@
 import type { FastifyInstance } from "fastify";
+import { prisma } from "../../db/client";
+import { leadCardInclude, toDashboardRow } from "../../services/dashboard";
 import { enrichUnclassified } from "../../services/enrich";
 
 export async function leadRoutes(app: FastifyInstance) {
+  app.get(
+    "/",
+    {
+      schema: {
+        tags: ["Leads"],
+        summary: "List all leads with company names",
+        description: "Every stored lead with company, contact, project, trigger, score, and recommended service.",
+      },
+    },
+    async () => {
+      const leads = await prisma.lead.findMany({
+        orderBy: { score: "desc" },
+        take: 500,
+        include: leadCardInclude,
+      });
+      return { count: leads.length, leads: leads.map(toDashboardRow) };
+    },
+  );
+
   app.post(
     "/enrich-all",
     {

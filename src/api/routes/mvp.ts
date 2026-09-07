@@ -9,7 +9,7 @@ export async function mvpRoutes(app: FastifyInstance) {
         tags: ["Dedupe"],
         summary: "Duplicate check",
         description:
-          "Step 4. Merges companies that look like the same firm (normalized name, same website domain, or same phone). Run after import, discover, and enrich.",
+          "Merges companies that look like the same firm (normalized name, same website domain, or same phone). Run after discover and enrich.",
       },
     },
     async () => runDuplicateCheck(),

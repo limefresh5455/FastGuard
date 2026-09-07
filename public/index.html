@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fast Guard — Lead Intelligence Demo</title>
+  <style>
+    :root {
+      --bg: #10140f;
+      --panel: #181e16;
+      --panel-2: #1f261c;
+      --line: #2d3828;
+      --text: #e8eee2;
+      --muted: #8f9b86;
+      --gold: #c4a35a;
+      --gold-dim: #8a7340;
+      --ok: #6fba7a;
+      --warn: #d4a017;
+      --bad: #c45c4a;
+      --focus: #3d4a36;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      letter-spacing: 0.01em;
+    }
+    a { color: var(--gold); }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 22px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .mark {
+      width: 36px; height: 36px;
+      border: 1px solid var(--gold-dim);
+      display: grid; place-items: center;
+      color: var(--gold);
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+    }
+    .brand p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+    .header-links { display: flex; gap: 18px; font-size: 13px; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 1px;
+      background: var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+    .stat {
+      background: var(--panel);
+      padding: 12px 14px;
+    }
+    .stat b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+    .stat span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      padding: 12px 18px;
+      background: var(--panel-2);
+      border-bottom: 1px solid var(--line);
+    }
+    input[type="search"], input[type="text"] {
+      background: var(--bg);
+      border: 1px solid var(--line);
+      color: var(--text);
+      padding: 8px 10px;
+      min-width: 220px;
+      font: inherit;
+    }
+    button {
+      background: transparent;
+      border: 1px solid var(--gold-dim);
+      color: var(--gold);
+      padding: 8px 12px;
+      font: inherit;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    button.primary { background: var(--gold); color: #16140e; border-color: var(--gold); font-weight: 650; }
+    button:disabled { opacity: 0.45; cursor: wait; }
+    .tabs { display: flex; gap: 0; padding: 0 18px; border-bottom: 1px solid var(--line); }
+    .tabs button {
+      border: 0;
+      border-bottom: 2px solid transparent;
+      color: var(--muted);
+      padding: 10px 14px;
+    }
+    .tabs button.on { color: var(--text); border-bottom-color: var(--gold); }
+    .toast {
+      margin: 10px 18px 0;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 13px;
+      display: none;
+    }
+    .toast.show { display: block; }
+    .toast.err { color: #f0c2ba; border-color: var(--bad); }
+    main { display: none; height: calc(100vh - 210px); }
+    main.on { display: grid; }
+    #view-companies { grid-template-columns: 320px 1fr; }
+    .list, .detail, .table-wrap { overflow: auto; }
+    .list { border-right: 1px solid var(--line); background: var(--panel); }
+    .co {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      cursor: pointer;
+    }
+    .co:hover, .co.on { background: var(--focus); }
+    .co strong { display: block; font-size: 14px; }
+    .co em { color: var(--muted); font-style: normal; font-size: 12px; }
+    .detail { padding: 18px 22px 40px; }
+    .empty { color: var(--muted); padding: 48px 24px; max-width: 520px; line-height: 1.5; }
+    h2 { margin: 0 0 6px; font-size: 22px; font-weight: 650; }
+    .meta { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+    .kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; font-size: 13px; margin-bottom: 22px; }
+    .kv dt { color: var(--muted); }
+    h3 {
+      margin: 22px 0 8px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--gold);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+    .score { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--gold); }
+    .badge {
+      display: inline-block;
+      padding: 1px 7px;
+      border: 1px solid var(--line);
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .table-wrap { padding: 8px 18px 40px; }
+    @media (max-width: 980px) {
+      .stats { grid-template-columns: repeat(4, 1fr); }
+      #view-companies { grid-template-columns: 1fr; height: auto; }
+      main.on { height: auto; }
+      .list { max-height: 280px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="mark">FG</div>
+      <div>
+        <h1>Fast Guard</h1>
+        <p>Sales intelligence demo · South Florida</p>
+      </div>
+    </div>
+    <div class="header-links">
+      <a href="/docs">API docs</a>
+      <a href="/health">Health</a>
+    </div>
+  </header>
+
+  <section class="stats" id="stats"></section>
+
+  <div class="toolbar">
+    <input id="search" type="search" placeholder="Filter company names…" />
+    <input id="lookup" type="text" placeholder="Lookup company by name" />
+    <button class="primary" id="btn-lookup">Lookup &amp; enrich</button>
+    <button class="primary" id="btn-discover">Discover South Florida</button>
+    <button id="btn-enrich">Enrich contacts</button>
+    <button id="btn-dedupe">Dedupe</button>
+    <button id="btn-reload">Reload</button>
+  </div>
+
+  <div class="tabs">
+    <button class="on" data-tab="companies">Companies</button>
+    <button data-tab="leads">All leads</button>
+    <button data-tab="qualified">Qualified</button>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <main id="view-companies" class="on">
+    <aside class="list" id="company-list"></aside>
+    <section class="detail" id="company-detail"></section>
+  </main>
+  <main id="view-leads"><div class="table-wrap" id="leads-table"></div></main>
+  <main id="view-qualified"><div class="table-wrap" id="qualified-table"></div></main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const state = { companies: [], allLeads: [], qualifiedLeads: [], totals: {}, names: [], selectedId: null, tab: "companies", q: "" };
+
+    function esc(v) {
+      return String(v ?? "").replace(/[&<>"'`]/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "`": "&#96;"
+      }[c]));
+    }
+    function dash(v) { return v ? esc(v) : "—"; }
+    function toast(msg, err) {
+      const el = $("toast");
+      el.textContent = msg;
+      el.className = "toast show" + (err ? " err" : "");
+    }
+    function busy(on) {
+      document.querySelectorAll(".toolbar button").forEach((b) => { b.disabled = on; });
+    }
+    async function api(url, opts) {
+      const res = await fetch(url, opts);
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { error: text || res.statusText }; }
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    function filteredCompanies() {
+      const q = state.q.trim().toLowerCase();
+      if (!q) return state.companies;
+      return state.companies.filter((c) =>
+        [c.name, c.city, c.companyType, c.website, c.phone].filter(Boolean).join(" ").toLowerCase().includes(q)
+      );
+    }
+
+    function renderStats() {
+      const t = state.totals || {};
+      const items = [
+        ["Companies", t.companies ?? state.companies.length],
+        ["Contacts", t.contacts ?? 0],
+        ["Projects", t.projects ?? 0],
+        ["Triggers", t.triggers ?? 0],
+        ["All leads", t.all ?? state.allLeads.length],
+        ["Qualified", t.qualified ?? 0],
+        ["Discovered", t.discovered ?? 0],
+        ["Classified", t.classified ?? 0],
+      ];
+      $("stats").innerHTML = items.map(([k, v]) => `<div class="stat"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("");
+    }
+
+    function renderCompanyList() {
+      const rows = filteredCompanies();
+      if (!rows.length) {
+        $("company-list").innerHTML = `<div class="empty">No companies yet. Click <b>Discover South Florida</b>. Company names will appear here.</div>`;
+        return;
+      }
+      $("company-list").innerHTML = rows.map((c) => {
+        const top = (c.leads && c.leads[0]) ? c.leads[0].score : "—";
+        const loc = [c.city, c.state].filter(Boolean).join(", ");
+        const on = c.id === state.selectedId ? " on" : "";
+        return `<div class="co${on}" data-id="${esc(c.id)}">
+          <strong>${esc(c.name)}</strong>
+          <em>${dash(loc)} · ${dash(c.companyType)} · score ${esc(top)}</em>
+        </div>`;
+      }).join("");
+      $("company-list").querySelectorAll(".co").forEach((el) => {
+        el.onclick = () => { state.selectedId = el.getAttribute("data-id"); render(); };
+      });
+    }
+
+    function table(headers, rows) {
+      if (!rows.length) return `<p class="meta">None stored yet.</p>`;
+      return `<table><thead><tr>${headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.join("")}</tbody></table>`;
+    }
+
+    function renderCompanyDetail() {
+      const c = state.companies.find((x) => x.id === state.selectedId) || filteredCompanies()[0];
+      if (!c) {
+        $("company-detail").innerHTML = `<div class="empty">Select a company to see contacts, projects, triggers, and lead scores.</div>`;
+        return;
+      }
+      state.selectedId = c.id;
+      const loc = [c.city, c.state].filter(Boolean).join(", ");
+      const contacts = (c.contacts || []).map((p) => `<tr>
+        <td>${dash(p.name)}</td><td>${dash(p.title)}</td><td>${dash(p.email)}</td><td>${dash(p.phone)}</td>
+      </tr>`);
+      const projects = (c.projects || []).map((p) => `<tr>
+        <td>${dash(p.name)}</td><td>${dash(p.address)}</td><td>${dash(p.type)}</td><td>${dash(p.stage)}</td>
+      </tr>`);
+      const triggers = (c.triggers || []).map((t) => `<tr>
+        <td>${dash(t.type)}</td><td>${dash(t.headline)}</td><td>${dash(t.date && String(t.date).slice(0, 10))}</td>
+        <td>${t.sourceUrl ? `<a href="${esc(t.sourceUrl)}" target="_blank" rel="noopener">source</a>` : "—"}</td>
+      </tr>`);
+      const leads = (c.leads || []).map((l) => `<tr>
+        <td class="score">${esc(l.score)}</td><td>${dash(l.recommendedService)}</td>
+        <td><span class="badge">${dash(l.status)}</span></td><td>${dash(l.source)}</td>
+      </tr>`);
+      $("company-detail").innerHTML = `
+        <h2>${esc(c.name)}</h2>
+        <div class="meta">${dash(c.companyType)} · ${dash(loc)}</div>
+        <dl class="kv">
+          <dt>Website</dt><dd>${c.website ? `<a href="${esc(c.website)}" target="_blank" rel="noopener">${esc(c.website)}</a>` : "—"}</dd>
+          <dt>Phone</dt><dd>${dash(c.phone)}</dd>
+          <dt>Source</dt><dd>${c.sourceUrl ? `<a href="${esc(c.sourceUrl)}" target="_blank" rel="noopener">${esc(c.sourceUrl)}</a>` : "—"}</dd>
+        </dl>
+        <h3>Contacts</h3>
+        ${table(["Name", "Title", "Email", "Phone"], contacts)}
+        <h3>Projects</h3>
+        ${table(["Name", "Address", "Type", "Stage"], projects)}
+        <h3>Triggers</h3>
+        ${table(["Type", "Headline", "Date", "Source"], triggers)}
+        <h3>Leads</h3>
+        ${table(["Score", "Recommended service", "Status", "Source"], leads)}
+      `;
+    }
+
+    function leadRows(list) {
+      return (list || []).map((l) => `<tr>
+        <td>${esc(l.company)}</td>
+        <td class="score">${esc(l.score)}</td>
+        <td>${dash(l.contact && l.contact.name)}</td>
+        <td>${dash(l.contact && l.contact.email)}</td>
+        <td>${dash(l.contact && l.contact.phone)}</td>
+        <td>${dash(l.project && l.project.name)}</td>
+        <td>${dash(l.trigger && l.trigger.headline)}</td>
+        <td>${dash(l.recommendedService)}</td>
+        <td><span class="badge">${dash(l.status)}</span></td>
+        <td>${dash(l.source)}</td>
+      </tr>`);
+    }
+
+    function renderLeadTable(target, list) {
+      $(target).innerHTML = table(
+        ["Company", "Score", "Contact", "Email", "Phone", "Project", "Trigger", "Service", "Status", "Source"],
+        leadRows(list)
+      );
+    }
+
+    function render() {
+      renderStats();
+      document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === state.tab));
+      $("view-companies").classList.toggle("on", state.tab === "companies");
+      $("view-leads").classList.toggle("on", state.tab === "leads");
+      $("view-qualified").classList.toggle("on", state.tab === "qualified");
+      renderCompanyList();
+      renderCompanyDetail();
+      renderLeadTable("leads-table", state.allLeads);
+      renderLeadTable("qualified-table", state.qualifiedLeads);
+    }
+
+    async function load() {
+      const data = await api("/api/dashboard");
+      state.companies = data.companies || [];
+      state.names = data.names || [];
+      state.allLeads = data.allLeads || [];
+      state.qualifiedLeads = data.qualifiedLeads || [];
+      state.totals = data.totals || {};
+      if (state.selectedId && !state.companies.some((c) => c.id === state.selectedId)) state.selectedId = null;
+      render();
+    }
+
+    document.querySelectorAll(".tabs button").forEach((b) => {
+      b.onclick = () => { state.tab = b.dataset.tab; render(); };
+    });
+    $("search").oninput = (e) => { state.q = e.target.value; render(); };
+    $("btn-reload").onclick = async () => { busy(true); try { await load(); toast("Reloaded " + state.companies.length + " companies."); } catch (e) { toast(e.message, true); } finally { busy(false); } };
+    $("btn-discover").onclick = async () => {
+      busy(true); toast("Scanning South Florida construction news… this can take a minute.");
+      try {
+        const out = await api("/api/discover", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ location: "South Florida" }) });
+        await load();
+        const names = (out.names || []).join(", ");
+        toast("Discover: " + out.created + " new / " + out.found + " found. " + (names || "No new company names."));
+      } catch (e) { toast(e.message, true); } finally { busy(false); }
+    };
+    $("btn-enrich").onclick = async () => {
+      busy(true); toast("Enriching contacts from public pages…");
+      try {
+        const out = await api("/api/leads/enrich-all", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 50, location: "South Florida" }) });
+        await load();
+        toast("Enriched " + out.processed + " leads, saved " + out.contactsSaved + " contacts. " + (out.names || []).join(", "));
+      } catch (e) { toast(e.message, true); } finally { busy(false); }
+    };
+    $("btn-dedupe").onclick = async () => {
+      busy(true);
+      try {
+        const out = await api("/api/dedupe", { method: "POST" });
+        await load();
+        toast("Dedupe complete. " + JSON.stringify(out));
+      } catch (e) { toast(e.message, true); } finally { busy(false); }
+    };
+    $("btn-lookup").onclick = async () => {
+      const name = $("lookup").value.trim();
+      if (!name) return toast("Enter a company name to look up.", true);
+      busy(true); toast("Looking up " + name + "…");
+      try {
+        const out = await api("/api/company?name=" + encodeURIComponent(name));
+        await load();
+        state.selectedId = out.company && out.company.id;
+        state.tab = "companies";
+        render();
+        toast("Loaded " + (out.company && out.company.name) + " with " + (out.contacts || []).length + " contacts.");
+      } catch (e) { toast(e.message, true); } finally { busy(false); }
+    };
+
+    load().then(() => {
+      toast(state.companies.length ? state.companies.length + " companies loaded." : "Database is empty. Discover South Florida to populate company names.");
+    }).catch((e) => toast(e.message, true));
+  </script>
+</body>
+</html>

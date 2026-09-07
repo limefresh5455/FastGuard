@@ -9,7 +9,7 @@ export async function discoverRoutes(app: FastifyInstance) {
         tags: ["Discover"],
         summary: "Find companies, projects, and triggers by location",
         description:
-          'Step 2. Body has only **location** (a region like `"South Florida"`). Scans public construction and property news for that area.',
+          'Step 2. Body has only **location** (a region like `"South Florida"`). Scans public construction and property news for that area. Response includes **names** (company names) and **companies** (id, name, project, score).',
         body: {
           type: "object",
           additionalProperties: false,

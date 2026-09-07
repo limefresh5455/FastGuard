@@ -95,6 +95,16 @@ export async function discoverByLocation(location: string) {
   const hits = await fetchHits(location);
   let created = 0;
   let skipped = 0;
+  const companies: Array<{
+    id: string;
+    name: string;
+    city: string | null;
+    project: string;
+    stage: string | null;
+    trigger: string;
+    score: number;
+    sourceUrl: string;
+  }> = [];
 
   for (const hit of hits) {
     const projectStage = inferNewsProjectStage(hit.title, hit.description);
@@ -163,8 +173,25 @@ export async function discoverByLocation(location: string) {
       },
     });
     created += 1;
+    companies.push({
+      id: company.id,
+      name: company.name,
+      city: company.city,
+      project: project.name,
+      stage: projectStage,
+      trigger: trigger.triggerType,
+      score: scored.total,
+      sourceUrl: hit.link,
+    });
   }
 
   await bumpSource("construction_news", `${location} construction news`, "news", created);
-  return { found: hits.length, created, skipped, location };
+  return {
+    found: hits.length,
+    created,
+    skipped,
+    location,
+    names: companies.map((c) => c.name),
+    companies,
+  };
 }

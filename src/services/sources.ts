@@ -10,7 +10,6 @@ export async function bumpSource(code: string, name: string, category: string, c
 
 export async function seedDefaultSources() {
   const rows = [
-    { code: "excel", name: "Existing outbound Excel", category: "excel" },
     { code: "construction_news", name: "South Florida construction news", category: "news" },
     { code: "property_news", name: "South Florida property news", category: "news" },
     { code: "lookup_company", name: "Manual company lookup", category: "lookup" },
