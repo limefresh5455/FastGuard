@@ -16,7 +16,11 @@ import { companyRoutes } from "./routes/company";
 import { mvpRoutes } from "./routes/mvp";
 
 export async function buildApp() {
-  const app = Fastify({ logger: { level: env.LOG_LEVEL }, trustProxy: true });
+  const app = Fastify({
+    logger: { level: env.LOG_LEVEL },
+    trustProxy: true,
+    disableRequestLogging: Boolean(process.env.VERCEL),
+  });
   await app.register(helmet, { contentSecurityPolicy: false, crossOriginEmbedderPolicy: false });
   await app.register(cors, { origin: true });
   await app.register(rateLimit, { max: 200, timeWindow: "1 minute" });

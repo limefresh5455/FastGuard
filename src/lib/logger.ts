@@ -4,7 +4,7 @@ import { env } from "../config/env";
 export const logger = pino({
   level: env.LOG_LEVEL,
   transport:
-    env.NODE_ENV === "development"
+    env.NODE_ENV === "development" && !process.env.VERCEL
       ? { target: "pino-pretty", options: { colorize: true } }
       : undefined,
 });

@@ -9,16 +9,37 @@ let ready: Promise<App> | undefined;
 
 async function getApp() {
   if (!ready) {
-    ready = buildApp().then(async (app) => {
+    ready = (async () => {
+      const app = await buildApp();
       await app.ready();
-      await ensureSchema(prisma);
+      try {
+        await ensureSchema(prisma);
+      } catch (err) {
+        app.log.warn({ err }, "ensureSchema skipped");
+      }
       return app;
+    })().catch((err) => {
+      ready = undefined;
+      throw err;
     });
   }
   return ready;
 }
 
+function sendError(res: ServerResponse, err: unknown) {
+  if (res.headersSent) return;
+  const message = err instanceof Error ? err.message : String(err);
+  res.statusCode = 500;
+  res.setHeader("content-type", "application/json; charset=utf-8");
+  res.end(JSON.stringify({ error: "Internal Server Error", message }));
+}
+
 export default async function handle(req: IncomingMessage, res: ServerResponse) {
-  const app = await getApp();
-  app.server.emit("request", req, res);
+  try {
+    const app = await getApp();
+    app.server.emit("request", req, res);
+  } catch (err) {
+    console.error(err);
+    sendError(res, err);
+  }
 }
