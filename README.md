@@ -13,6 +13,27 @@ npm run dev
 
 Open http://127.0.0.1:8081 for the demo UI (company names, contacts, projects, triggers, scores). API docs: http://127.0.0.1:8081/docs
 
+## Deploy on Render
+
+The start command cannot be `src/index.ts` (that is what caused `Permission denied`). Use compiled Node:
+
+| Render setting | Value |
+| --- | --- |
+| **Runtime** | Node |
+| **Build Command** | `npm install && npx prisma generate && npx prisma db push && npm run build` |
+| **Start Command** | `npm start` |
+| **Health Check Path** | `/health` |
+
+Environment variables:
+
+| Name | Value |
+| --- | --- |
+| `NODE_VERSION` | `20` |
+| `DATABASE_URL` | Internal URL from the Render Postgres instance (link the database to this service) |
+| `OPENROUTER_API_KEY` | Your OpenRouter key (optional, needed for real enrichment) |
+
+Then **Manual Deploy → Deploy latest commit**. After it is live, open `https://<your-service>.onrender.com`.
+
 DB: `fastguard_leads` on **localhost:5434**, user `fastguard` / `fastguard`.
 
 Set `OPENROUTER_API_KEY` in `.env` for classification. Default model is `nvidia/nemotron-3.5-lightning:free`. If OpenRouter returns a privacy 404, enable free-endpoint training/publication at https://openrouter.ai/settings/privacy and restart the API. Without a key, enrich uses a placeholder score.
