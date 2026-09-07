@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { appDatabaseUrl, migrateDatabaseUrl } from "./prisma-url.mjs";
+import { appDatabaseUrl, isLocalDbUrl, migrateDatabaseUrl } from "./prisma-url.mjs";
 
 function run(command, args) {
   const result = spawnSync(command, args, { stdio: "inherit", shell: true, env: process.env });
@@ -9,12 +9,12 @@ function run(command, args) {
 run("node", ["scripts/prisma-generate.mjs"]);
 
 const migrateUrl = migrateDatabaseUrl();
-if (!migrateUrl) {
+if (!migrateUrl || isLocalDbUrl(migrateUrl)) {
   const appUrl = appDatabaseUrl();
   console.warn(
-    appUrl
-      ? "Skipping prisma db push: DATABASE_URL is prisma+postgres://. Add a postgres:// DIRECT_URL from Prisma Console if you need the schema pushed during deploy."
-      : "Skipping prisma db push: no DATABASE_URL.",
+    !appUrl
+      ? "Skipping prisma db push: no hosted DATABASE_URL. In Vercel, connect Prisma Postgres (prefix DATABASE). Do not use localhost."
+      : "Skipping prisma db push: no reachable postgres:// URL (Prisma Postgres uses prisma+postgres://). Tables are created at runtime.",
   );
   process.exit(0);
 }

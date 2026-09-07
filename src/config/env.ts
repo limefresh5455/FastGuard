@@ -1,7 +1,14 @@
 import "dotenv/config";
 import { z } from "zod";
 
+function isLocalDbUrl(url: string) {
+  return /@localhost[:/?]|@127\.0\.0\.1[:/?]/i.test(url);
+}
+
 function applyHostedPostgresEnv() {
+  if (process.env.VERCEL && isLocalDbUrl(process.env.DATABASE_URL || "")) {
+    process.env.DATABASE_URL = "";
+  }
   if (!process.env.DATABASE_URL) {
     process.env.DATABASE_URL =
       process.env.POSTGRES_PRISMA_URL ||
@@ -14,7 +21,8 @@ function applyHostedPostgresEnv() {
   if (!process.env.DIRECT_URL) {
     const fallback =
       process.env.POSTGRES_URL_NON_POOLING || process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL || "";
-    process.env.DIRECT_URL = /^(postgres|postgresql):\/\//i.test(fallback) ? fallback : "";
+    process.env.DIRECT_URL =
+      /^(postgres|postgresql):\/\//i.test(fallback) && !isLocalDbUrl(fallback) ? fallback : "";
   }
 }
 applyHostedPostgresEnv();
