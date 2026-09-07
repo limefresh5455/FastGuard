@@ -57,8 +57,20 @@ export async function buildApp() {
     const html = await readFile(resolvePublicFile("index.html"), "utf8");
     return reply.type("text/html; charset=utf-8").send(html);
   };
+  const sendPublic = async (
+    name: string,
+    type: string,
+    reply: { type: (t: string) => { header: (k: string, v: string) => { send: (b: Buffer) => unknown } } },
+  ) => {
+    const buf = await readFile(resolvePublicFile(name));
+    return reply.type(type).header("cache-control", "public, max-age=86400").send(buf);
+  };
   app.get("/", sendDemo);
   app.get("/app", sendDemo);
+  app.get("/favicon.svg", async (_req, reply) => sendPublic("favicon.svg", "image/svg+xml", reply));
+  app.get("/favicon.png", async (_req, reply) => sendPublic("favicon.png", "image/png", reply));
+  app.get("/favicon.ico", async (_req, reply) => sendPublic("favicon.png", "image/png", reply));
+  app.get("/apple-touch-icon.png", async (_req, reply) => sendPublic("apple-touch-icon.png", "image/png", reply));
   await app.register(healthRoutes);
   await app.register(mvpRoutes, { prefix: "/api" });
   await app.register(leadRoutes, { prefix: "/api/leads" });
