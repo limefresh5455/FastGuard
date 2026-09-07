@@ -57,6 +57,7 @@ Discover and Enrich can exceed the **Hobby 10s** limit. The function `maxDuratio
 | POST | `/api/discover` | Find companies, projects, triggers — body `{ "location": "South Florida" }`. Returns **names**. |
 | POST | `/api/leads/enrich-all` | Enrich contacts, classify, score 0–100 |
 | POST | `/api/dedupe` | Merge duplicate companies |
+| POST | `/api/reset` | Truncate all tables (companies, contacts, projects, triggers, leads, sources) |
 | GET | `/api/company?name=` | Lookup + enrich contacts and details by company name |
 
 Not in Phase 1: national crawl, CRM, RFP engine, feedback learning.

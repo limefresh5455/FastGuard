@@ -47,6 +47,7 @@ export async function buildApp() {
         { name: "Dedupe", description: "3. Duplicate check" },
         { name: "Dashboard", description: "4. Companies, all leads, qualified leads" },
         { name: "Company", description: "List companies or find contacts by name" },
+        { name: "Admin", description: "Reset / truncate demo data" },
       ],
       servers: [{ url: "/", description: "This host" }],
     },

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { runDuplicateCheck } from "../../services/dedupe";
+import { truncateAllTables } from "../../services/truncate";
 
 export async function mvpRoutes(app: FastifyInstance) {
   app.post(
@@ -13,5 +14,18 @@ export async function mvpRoutes(app: FastifyInstance) {
       },
     },
     async () => runDuplicateCheck(),
+  );
+
+  app.post(
+    "/reset",
+    {
+      schema: {
+        tags: ["Admin"],
+        summary: "Truncate all tables",
+        description:
+          "Deletes every company, contact, project, trigger, lead, and source row. Use this to start a demo from a clean database, then run Discover again.",
+      },
+    },
+    async () => truncateAllTables(),
   );
 }

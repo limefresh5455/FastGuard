@@ -55,8 +55,7 @@ export async function leadRoutes(app: FastifyInstance) {
     },
     async (req) => {
       const q = (req.body as { limit?: number; location?: string }) ?? {};
-      const fallback = process.env.VERCEL ? 2 : 50;
-      return enrichUnclassified(q.limit ?? fallback, q.location);
+      return enrichUnclassified(q.limit ?? 50, q.location);
     },
   );
 }
