@@ -11,11 +11,9 @@ function applyHostedPostgresEnv() {
       "";
   }
   if (!process.env.DIRECT_URL) {
-    process.env.DIRECT_URL =
-      process.env.POSTGRES_URL_NON_POOLING ||
-      process.env.DATABASE_URL_UNPOOLED ||
-      process.env.DATABASE_URL ||
-      "";
+    const fallback =
+      process.env.POSTGRES_URL_NON_POOLING || process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL || "";
+    process.env.DIRECT_URL = /^(postgres|postgresql):\/\//i.test(fallback) ? fallback : "";
   }
 }
 applyHostedPostgresEnv();
