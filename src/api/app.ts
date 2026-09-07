@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
@@ -7,6 +6,7 @@ import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { env } from "../config/env";
+import { resolvePublicFile } from "../lib/paths";
 import { healthRoutes } from "./routes/health";
 import { leadRoutes } from "./routes/leads";
 import { discoverRoutes } from "./routes/discover";
@@ -16,7 +16,7 @@ import { companyRoutes } from "./routes/company";
 import { mvpRoutes } from "./routes/mvp";
 
 export async function buildApp() {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: { level: env.LOG_LEVEL }, trustProxy: true });
   await app.register(helmet, { contentSecurityPolicy: false, crossOriginEmbedderPolicy: false });
   await app.register(cors, { origin: true });
   await app.register(rateLimit, { max: 200, timeWindow: "1 minute" });
@@ -27,7 +27,7 @@ export async function buildApp() {
         version: "1.0.0",
         description: [
           "South Florida only. Discover companies/projects → enrich + AI score 0–100 → duplicate check → dashboard.",
-          "Demo UI: **http://127.0.0.1:8081** (company names and all stored data). API docs: /docs.",
+          "Open `/` for the demo UI. API docs: /docs.",
           "Not in MVP: national scrape, CRM, RFP engine, feedback learning.",
         ].join("\n"),
       },
@@ -39,12 +39,12 @@ export async function buildApp() {
         { name: "Dashboard", description: "4. Companies, all leads, qualified leads" },
         { name: "Company", description: "List companies or find contacts by name" },
       ],
-      servers: [{ url: `http://127.0.0.1:${env.PORT}`, description: "Local API" }],
+      servers: [{ url: "/", description: "This host" }],
     },
   });
   await app.register(swaggerUi, { routePrefix: "/docs" });
   const sendDemo = async (_req: unknown, reply: { type: (t: string) => { send: (b: string) => unknown } }) => {
-    const html = await readFile(path.join(process.cwd(), "public", "index.html"), "utf8");
+    const html = await readFile(resolvePublicFile("index.html"), "utf8");
     return reply.type("text/html; charset=utf-8").send(html);
   };
   app.get("/", sendDemo);

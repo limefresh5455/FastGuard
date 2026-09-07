@@ -8,3 +8,4 @@ coverage/
 uploads/
 tmp/
 raw_store/
+.vercel/
