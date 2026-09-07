@@ -8,7 +8,7 @@
     "build": "prisma generate && tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "postinstall": "prisma generate",
-    "vercel-build": "prisma generate && prisma db push",
+    "vercel-build": "node scripts/vercel-build.mjs",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "typecheck": "tsc --noEmit"

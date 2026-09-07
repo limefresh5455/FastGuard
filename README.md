@@ -33,7 +33,7 @@ Set `OPENROUTER_API_KEY` in `.env` for classification. Default model is `nvidia/
 5. In **Settings → Environment Variables**, also add:
    - `OPENROUTER_API_KEY` — your OpenRouter key (needed for contact enrichment)
    - `OPENROUTER_MODEL` — `nvidia/nemotron-3.5-lightning:free` (optional)
-6. Deploy. The build runs `prisma generate` and `prisma db push` so tables are created.
+6. Deploy. The build generates Prisma Client and pushes the schema when `DATABASE_URL` is present.
 7. Open `https://<your-app>.vercel.app` (demo UI) and `/docs` (Swagger).
 
 CLI:

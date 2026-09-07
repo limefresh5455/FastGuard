@@ -25,7 +25,7 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().default(8081),
   LOG_LEVEL: z.string().default("info"),
   DATABASE_URL: z.string().min(1),
-  DIRECT_URL: z.string().min(1),
+  DIRECT_URL: z.string().optional().default(""),
   OPENROUTER_API_KEY: z.string().optional().default(""),
   LLM_API_KEY: z.string().optional().default(""),
   OPENROUTER_BASE_URL: z.string().default("https://openrouter.ai/api/v1"),
