@@ -20,6 +20,11 @@ export async function buildApp() {
   await app.register(helmet, { contentSecurityPolicy: false, crossOriginEmbedderPolicy: false });
   await app.register(cors, { origin: true });
   await app.register(rateLimit, { max: 200, timeWindow: "1 minute" });
+  app.setErrorHandler((err, req, reply) => {
+    req.log.error(err);
+    const message = err instanceof Error ? err.message : "Internal Server Error";
+    return reply.code(500).send({ error: "Internal Server Error", message });
+  });
   await app.register(swagger, {
     openapi: {
       info: {

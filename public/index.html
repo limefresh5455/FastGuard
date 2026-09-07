@@ -225,7 +225,7 @@
       const text = await res.text();
       let data;
       try { data = JSON.parse(text); } catch { data = { error: text || res.statusText }; }
-      if (!res.ok) throw new Error(data.error || res.statusText);
+      if (!res.ok) throw new Error(data.message || data.error || res.statusText);
       return data;
     }
 

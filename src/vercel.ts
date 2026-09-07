@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { prisma } from "./db/client";
+import { ensureSchema } from "./db/ensureSchema";
 import { buildApp } from "./api/app";
 
 type App = Awaited<ReturnType<typeof buildApp>>;
@@ -9,6 +11,7 @@ async function getApp() {
   if (!ready) {
     ready = buildApp().then(async (app) => {
       await app.ready();
+      await ensureSchema(prisma);
       return app;
     });
   }
