@@ -4,7 +4,7 @@
   "rewrites": [{ "source": "/(.*)", "destination": "/api" }],
   "functions": {
     "api/index.ts": {
-      "maxDuration": 60,
+      "maxDuration": 300,
       "includeFiles": "{public/**,node_modules/.prisma/client/**,node_modules/@prisma/client/**}"
     }
   }

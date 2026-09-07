@@ -379,11 +379,21 @@
       } catch (e) { toast(e.message, true); } finally { busy(false); }
     };
     $("btn-enrich").onclick = async () => {
-      busy(true); toast("Enriching contacts from public pages…");
+      busy(true);
+      let processed = 0, contactsSaved = 0, remaining = 0;
+      const names = [];
       try {
-        const out = await api("/api/leads/enrich-all", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 50, location: "South Florida" }) });
+        for (let i = 0; i < 10; i++) {
+          toast("Enriching batch " + (i + 1) + " (2 leads per request on Vercel)…");
+          const out = await api("/api/leads/enrich-all", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 2, location: "South Florida" }) });
+          processed += Number(out.processed) || 0;
+          contactsSaved += Number(out.contactsSaved) || 0;
+          remaining = Number(out.remaining) || 0;
+          if (Array.isArray(out.names)) names.push.apply(names, out.names);
+          if (!remaining || !out.processed) break;
+        }
         await load();
-        toast("Enriched " + out.processed + " leads, saved " + out.contactsSaved + " contacts. " + (out.names || []).join(", "));
+        toast("Enriched " + processed + " leads, saved " + contactsSaved + " contacts. " + (remaining ? remaining + " still need enrich — click Enrich again. " : "") + names.join(", "));
       } catch (e) { toast(e.message, true); } finally { busy(false); }
     };
     $("btn-dedupe").onclick = async () => {

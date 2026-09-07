@@ -33,7 +33,7 @@ export async function leadRoutes(app: FastifyInstance) {
           "Step 3 of the MVP. Processes up to `limit` leads that are not classified or have no contact.",
           "Optional **location** (e.g. `\"South Florida\"` or `\"Miami\"`) limits enrichment to companies/projects in that area.",
           "Fetches company websites and news, extracts people with the LLM, and **upserts** Contact rows (no duplicate company-name contacts).",
-          "Requires OPENROUTER_API_KEY. Does not invent emails or names.",
+          "On Vercel each call processes at most 2 leads so the function does not time out. Click Enrich again for the next batch.",
         ].join("\n"),
         body: {
           type: "object",
@@ -55,7 +55,8 @@ export async function leadRoutes(app: FastifyInstance) {
     },
     async (req) => {
       const q = (req.body as { limit?: number; location?: string }) ?? {};
-      return enrichUnclassified(q.limit ?? 50, q.location);
+      const fallback = process.env.VERCEL ? 2 : 50;
+      return enrichUnclassified(q.limit ?? fallback, q.location);
     },
   );
 }

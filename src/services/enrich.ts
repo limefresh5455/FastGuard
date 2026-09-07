@@ -489,32 +489,41 @@ export async function enrichLead(id: string, location?: string) {
 
 export async function enrichUnclassified(limit = 50, location?: string) {
   const loc = location?.trim();
+  const onVercel = Boolean(process.env.VERCEL);
+  const batch = onVercel ? Math.min(Math.max(1, limit), 2) : Math.max(1, limit);
+  const deadline = onVercel ? Date.now() + 40_000 : Number.POSITIVE_INFINITY;
   const cities = loc ? (/south\s*florida/i.test(loc) ? [loc, ...SOUTH_FL_CITIES] : [loc]) : [];
-  const ids = await prisma.lead.findMany({
-    where: {
-      status: { not: "EXCLUDED" },
-      NOT: {
-        contact: {
-          AND: [{ firstName: { not: null } }, { lastName: { not: null } }],
-        },
+  const where = {
+    status: { not: "EXCLUDED" as const },
+    NOT: {
+      contact: {
+        AND: [{ firstName: { not: null } }, { lastName: { not: null } }],
       },
-      ...(cities.length
-        ? {
-            OR: cities.flatMap((city) => [
-              { company: { city: { contains: city, mode: "insensitive" as const } } },
-              { project: { city: { contains: city, mode: "insensitive" as const } } },
-            ]),
-          }
-        : {}),
     },
-    take: limit,
+    ...(cities.length
+      ? {
+          OR: cities.flatMap((city) => [
+            { company: { city: { contains: city, mode: "insensitive" as const } } },
+            { project: { city: { contains: city, mode: "insensitive" as const } } },
+          ]),
+        }
+      : {}),
+  };
+  const ids = await prisma.lead.findMany({
+    where,
+    take: batch,
     select: { id: true },
   });
   let contactsSaved = 0;
   let failed = 0;
+  let stoppedEarly = false;
   const errors: string[] = [];
   const companies: string[] = [];
   for (const row of ids) {
+    if (Date.now() > deadline) {
+      stoppedEarly = true;
+      break;
+    }
     try {
       const out = await enrichLead(row.id, loc);
       contactsSaved += out && "contactsSaved" in out ? Number(out.contactsSaved) : 0;
@@ -525,10 +534,13 @@ export async function enrichUnclassified(limit = 50, location?: string) {
       errors.push(err instanceof Error ? err.message : String(err));
     }
   }
+  const remaining = await prisma.lead.count({ where });
   return {
     processed: ids.length,
     contactsSaved,
     failed,
+    remaining,
+    partial: stoppedEarly || remaining > 0,
     errors: errors.slice(0, 5),
     location: loc || null,
     names: companies,
