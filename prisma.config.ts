@@ -3,7 +3,11 @@ import { defineConfig } from "prisma/config";
 
 if (!process.env.DATABASE_URL) {
   process.env.DATABASE_URL =
-    process.env.POSTGRES_PRISMA_URL || process.env.POSTGRES_URL || process.env.PRISMA_DATABASE_URL || "";
+    process.env.POSTGRES_PRISMA_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.PRISMA_DATABASE_URL ||
+    process.env.STORAGE_URL ||
+    "";
 }
 if (/^prisma(\+postgres)?:\/\//i.test(process.env.DATABASE_URL || "")) {
   process.env.DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";

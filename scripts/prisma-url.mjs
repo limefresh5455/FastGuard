@@ -15,7 +15,7 @@ export function isTcpPostgres(url) {
 }
 
 export function appDatabaseUrl() {
-  return firstEnv("DATABASE_URL", "POSTGRES_PRISMA_URL", "POSTGRES_URL", "PRISMA_DATABASE_URL");
+  return firstEnv("DATABASE_URL", "POSTGRES_PRISMA_URL", "POSTGRES_URL", "PRISMA_DATABASE_URL", "STORAGE_URL");
 }
 
 export function migrateDatabaseUrl() {
