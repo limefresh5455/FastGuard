@@ -1,4 +1,4 @@
 import handle from "../src/vercel";
 
 export default handle;
-export const maxDuration = 1800;
+export const maxDuration = 300;
