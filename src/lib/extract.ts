@@ -1,4 +1,4 @@
-import { looksLikeCompanyAsContactName, normalizePhone } from "./normalize";
+import { looksLikeCompanyAsContactName, normalizeCompanyName, normalizePhone } from "./normalize";
 
 export type PersonHit = {
   firstName: string | null;
@@ -108,6 +108,49 @@ export function looksLikeNewsHeadline(name: string): boolean {
     return true;
   }
   return (n.match(/,/g) || []).length >= 2;
+}
+
+export function extractCompanyLookupCandidates(name: string, description = ""): string[] {
+  const out: string[] = [];
+  const add = (s?: string | null) => {
+    const t = s?.replace(/\s+/g, " ").trim();
+    if (!t || t.length < 3 || t.length > 100) return;
+    if (/^[A-Za-z]+\.\s+[A-Z]/.test(t)) return;
+    if (/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(t) && t.length < 30) return;
+    if (looksLikeNewsHeadline(t) && !/\b(university|construction|contractors?|developers?|realty|llc|inc|corp|group|partners|associates|holdings)\b/i.test(t)) {
+      return;
+    }
+    if (out.some((x) => normalizeCompanyName(x) === normalizeCompanyName(t))) return;
+    out.push(t);
+  };
+
+  const blob = `${name}. ${description}`.trim();
+  add(name);
+  add(companyNameFromNews(name, description));
+  if (description) add(companyNameFromNews(description, name));
+
+  const beforeVerb = blob.match(
+    /^(.+?)\s+(?:will|breaks ground|breaking ground|announces|scoops|celebrating|awarded|plans to|set to|begins|started|opens|celebrates|investigation|survey|zoom)\b/i,
+  );
+  if (beforeVerb?.[1]) add(beforeVerb[1]);
+
+  const orgPatterns = [
+    /\b([A-Z][\w&.'-]+(?:\s+(?:of|and|&)\s+[\w&.'-]+)*\s+(?:University|Construction|Contractors|Developers|Development|Realty|Group|Holdings|Partners|Associates))\b/g,
+    /\b([A-Z][\w&.'-]+(?:\s+[A-Z][\w&.'-]+){0,5}\s+(?:LLC|Inc\.?|Corp\.?|L\.?L\.?C\.?))\b/g,
+    /\b([A-Z][\w&.'-]+(?:\s+[A-Z][\w&.'-]+){0,4}\s+(?:Construction|Contractors|Developers|Development|Holdings|Partners|Associates|Realty))\b/g,
+  ];
+  for (const re of orgPatterns) {
+    for (const m of blob.matchAll(re)) add(m[1]);
+  }
+
+  return out
+    .sort((a, b) => {
+      const aHead = looksLikeNewsHeadline(a) ? 1 : 0;
+      const bHead = looksLikeNewsHeadline(b) ? 1 : 0;
+      if (aHead !== bHead) return aHead - bHead;
+      return a.length - b.length;
+    })
+    .slice(0, 10);
 }
 
 export function companyNameFromNews(title: string, description = ""): string {

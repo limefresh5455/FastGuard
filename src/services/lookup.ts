@@ -1,9 +1,10 @@
 import { prisma } from "../db/client";
 import { resolveConstructionStage } from "../lib/constructionFit";
 import { classifyLead, extractPlaceEntities } from "../llm/classify";
+import { extractCompanyLookupCandidates, looksLikeNewsHeadline } from "../lib/extract";
 import { normalizeCompanyName } from "../lib/normalize";
 import { isPersonName, scoreLead } from "../scoring/scoreLead";
-import { lookupCompanyContactsFromApollo } from "./apollo";
+import { lookupCompanyContactsFromApollo, lookupCompanyContactsFromApolloCandidates } from "./apollo";
 import { persistContactsForCompany, syncProjectFromClassification } from "./enrich";
 import { gatherCompanyIntel, gatherSourceText, websitePageUrls } from "./fetchPublic";
 import { searchNews } from "./newsSearch";
@@ -205,26 +206,77 @@ async function loadCompanyCard(companyId: string) {
   };
 }
 
-export async function findCompanyByName(name: string) {
-  const q = name.trim();
-  if (!q) throw new Error("company name is required");
-  const apollo = await lookupCompanyContactsFromApollo(q);
+export async function findCompanyByName(input: string | { name?: string; description?: string; companyId?: string }) {
+  const opts = typeof input === "string" ? { name: input } : input;
+  let name = opts.name?.trim() ?? "";
+  let description = opts.description?.trim() ?? "";
+
+  const existing = opts.companyId
+    ? await prisma.company.findUnique({
+        where: { id: opts.companyId },
+        include: {
+          triggers: { orderBy: { triggerDate: "desc" }, take: 5 },
+          projects: { orderBy: { createdAt: "desc" }, take: 3 },
+        },
+      })
+    : null;
+
+  if (existing) {
+    if (!name) name = existing.name;
+    if (!description) {
+      description = [
+        ...existing.triggers.map((t) => t.headline),
+        ...existing.projects.map((p) => p.name),
+      ]
+        .filter(Boolean)
+        .join(". ");
+    }
+  }
+
+  if (!name && !description) throw new Error("company name is required");
+
+  let candidates = extractCompanyLookupCandidates(name, description);
+  if (!candidates.length && name) candidates = [name];
+
+  let apollo;
+  let resolvedQuery = name;
+  try {
+    const out = await lookupCompanyContactsFromApolloCandidates(candidates);
+    apollo = out.hit;
+    resolvedQuery = out.query;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg !== "company not found" || !description) throw err;
+    const place = await extractPlaceEntities({
+      address: name || "South Florida",
+      sourceText: `${name}. ${description}`,
+    });
+    const llmCandidates = place.companies.map((c) => c.name).filter(Boolean);
+    if (!llmCandidates.length) throw err;
+    const out = await lookupCompanyContactsFromApolloCandidates(llmCandidates);
+    apollo = out.hit;
+    resolvedQuery = out.query;
+  }
+
   const apolloNorm = normalizeCompanyName(apollo.name) || apollo.name.toLowerCase();
-  const queryNorm = normalizeCompanyName(q) || q.toLowerCase();
+  const queryNorm = normalizeCompanyName(resolvedQuery) || resolvedQuery.toLowerCase();
 
   const matches = await prisma.company.findMany({
     where: {
       OR: [
+        ...(existing ? [{ id: existing.id }] : []),
         { normalizedName: apolloNorm },
         { normalizedName: queryNorm },
-        { name: { contains: q, mode: "insensitive" } },
-        { name: { contains: apollo.name, mode: "insensitive" } },
+        ...(name ? [{ name: { contains: name, mode: "insensitive" as const } }] : []),
+        { name: { contains: apollo.name, mode: "insensitive" as const } },
       ],
     },
     take: 10,
     orderBy: { name: "asc" },
   });
   matches.sort((a, b) => {
+    if (existing && a.id === existing.id) return -1;
+    if (existing && b.id === existing.id) return 1;
     const aExact = a.normalizedName === apolloNorm || a.normalizedName === queryNorm ? 0 : 1;
     const bExact = b.normalizedName === apolloNorm || b.normalizedName === queryNorm ? 0 : 1;
     return aExact - bExact;
@@ -232,15 +284,18 @@ export async function findCompanyByName(name: string) {
 
   const extra = {
     website: apollo.website,
-    city: apollo.city || "South Florida",
-    state: apollo.state || "FL",
+    city: apollo.city || existing?.city || "South Florida",
+    state: apollo.state || existing?.state || "FL",
     phone: apollo.phone,
     sourceUrl: apollo.linkedinUrl || apollo.website,
   };
+  const headlineName = existing?.name && looksLikeNewsHeadline(existing.name);
   const company = matches[0]
     ? await prisma.company.update({
         where: { id: matches[0].id },
         data: {
+          name: headlineName ? apollo.name : matches[0].name,
+          normalizedName: headlineName ? apolloNorm : matches[0].normalizedName,
           website: extra.website || matches[0].website,
           city: extra.city || matches[0].city,
           state: extra.state || matches[0].state,
@@ -257,7 +312,7 @@ export async function findCompanyByName(name: string) {
     website: extra.website || company.website,
     phone: extra.phone || company.phone,
     sourceUrls,
-    pageText: "",
+    pageText: description,
     extraPeople: apollo.people,
   });
 
@@ -274,7 +329,9 @@ export async function findCompanyByName(name: string) {
   if (!card) throw new Error("company not found");
   const others = matches.filter((m) => m.id !== company.id).map((m) => ({ id: m.id, name: m.name }));
   return {
-    query: q,
+    query: name || resolvedQuery,
+    resolvedQuery,
+    description: description || null,
     enriched: true,
     source: "apollo",
     domain: apollo.domain,

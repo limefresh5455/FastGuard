@@ -9,25 +9,35 @@ export async function companyRoutes(app: FastifyInstance) {
         tags: ["Company"],
         summary: "Find company domain and contacts by name (Apollo)",
         description:
-          "Looks up **one company** in Apollo.io by name, saves the domain/website, phone, and people (name, title, email, phone) into Company/Contact, and returns the stored card for the demo UI. Does not run enrich-all.",
+          "Looks up **one company** in Apollo.io by name, saved company id, or headline/description. If the name is a news headline, pass `description` or `id` so the service can extract the real company and fetch contacts.",
         querystring: {
           type: "object",
-          required: ["name"],
           additionalProperties: false,
           properties: {
+            id: {
+              type: "string",
+              description: "Stored company id from the dashboard list",
+            },
             name: {
               type: "string",
-              description: 'Company name, e.g. "ABC Construction"',
+              description: 'Company name or headline, e.g. "ABC Construction"',
+            },
+            description: {
+              type: "string",
+              description: "Trigger headline / project description used when the name is not a clean company name",
             },
           },
         },
       },
     },
     async (req, reply) => {
-      const name = (req.query as { name?: string }).name?.trim();
-      if (!name) return reply.code(400).send({ error: "name is required" });
+      const q = req.query as { id?: string; name?: string; description?: string };
+      const id = q.id?.trim();
+      const name = q.name?.trim();
+      const description = q.description?.trim();
+      if (!id && !name) return reply.code(400).send({ error: "id or name is required" });
       try {
-        return await findCompanyByName(name);
+        return await findCompanyByName({ companyId: id, name, description });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         const code =

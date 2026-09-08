@@ -285,6 +285,28 @@ async function enrichPeople(people: JsonMap[], domain: string | null): Promise<J
   }
 }
 
+export async function lookupCompanyContactsFromApolloCandidates(
+  candidates: string[],
+): Promise<{ hit: ApolloCompanyHit; query: string }> {
+  const seen = new Set<string>();
+  let lastErr: Error | null = null;
+  for (const raw of candidates) {
+    const q = raw.trim();
+    if (!q) continue;
+    const key = normalizeCompanyName(q) || q.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    try {
+      const hit = await lookupCompanyContactsFromApollo(q);
+      return { hit, query: q };
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      if (lastErr.message !== "company not found") throw lastErr;
+    }
+  }
+  throw lastErr ?? new Error("company not found");
+}
+
 export async function lookupCompanyContactsFromApollo(name: string): Promise<ApolloCompanyHit> {
   const q = name.trim();
   if (!q) throw new Error("company name is required");

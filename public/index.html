@@ -226,7 +226,7 @@
 
   <div class="toolbar">
     <input id="search" type="search" placeholder="Filter company names…" />
-    <input id="lookup" type="text" placeholder="Company name — Apollo domain &amp; contacts" />
+    <input id="lookup" type="text" placeholder="Optional company name override" />
     <button class="primary" id="btn-lookup">Lookup in Apollo</button>
     <input id="location" type="text" placeholder="City, metro, or region" value="South Florida" autocomplete="off" />
     <button class="primary" id="btn-discover">Discover</button>
@@ -255,6 +255,29 @@
     const LOC_KEY = "fg-location";
     const state = { companies: [], allLeads: [], qualifiedLeads: [], totals: {}, names: [], selectedId: null, tab: "companies", q: "" };
 
+    function selectedCompany() {
+      return state.companies.find((c) => c.id === state.selectedId) || null;
+    }
+    function companyLookupDescription(c) {
+      if (!c) return "";
+      const parts = [];
+      if (c.triggers && c.triggers.length) parts.push(...c.triggers.map((t) => t.headline));
+      if (c.projects && c.projects.length) parts.push(...c.projects.map((p) => p.name));
+      return parts.filter(Boolean).join(". ");
+    }
+    function lookupCompanyUrl() {
+      const manual = $("lookup").value.trim();
+      const c = selectedCompany();
+      if (c) {
+        let url = "/api/company?id=" + encodeURIComponent(c.id);
+        if (manual) url += "&name=" + encodeURIComponent(manual);
+        const desc = companyLookupDescription(c);
+        if (desc) url += "&description=" + encodeURIComponent(desc);
+        return url;
+      }
+      if (manual) return "/api/company?name=" + encodeURIComponent(manual);
+      return null;
+    }
     function currentLocation() {
       return $("location").value.trim();
     }
@@ -414,7 +437,10 @@
         ${table(["Type", "Headline", "Date", "Source"], triggers)}
         <h3>Leads</h3>
         ${table(["Score", "Recommended service", "Status", "Source"], leads)}
+        <p style="margin-top:18px"><button class="primary" id="btn-lookup-company">Lookup in Apollo</button></p>
       `;
+      const lookupBtn = $("btn-lookup-company");
+      if (lookupBtn) lookupBtn.onclick = () => $("btn-lookup").click();
     }
 
     function leadRows(list) {
@@ -520,17 +546,20 @@
     };
     $("lookup").onkeydown = (e) => { if (e.key === "Enter") $("btn-lookup").click(); };
     $("btn-lookup").onclick = async () => {
-      const name = $("lookup").value.trim();
-      if (!name) return toast("Enter a company name to look up in Apollo.", true);
-      busy(true); toast("Looking up " + name + " in Apollo…");
+      const url = lookupCompanyUrl();
+      const c = selectedCompany();
+      if (!url) return toast("Select a company from the list, or enter a name to look up in Apollo.", true);
+      busy(true);
+      toast("Looking up " + (c ? c.name : $("lookup").value.trim()) + " in Apollo…");
       try {
-        const out = await api("/api/company?name=" + encodeURIComponent(name));
+        const out = await api(url);
         await load();
         state.selectedId = out.company && out.company.id;
         state.tab = "companies";
         render();
         toast(
           "Apollo: " + (out.company && out.company.name) +
+          (out.resolvedQuery && out.resolvedQuery !== out.query ? " · matched " + out.resolvedQuery : "") +
           (out.domain ? " · " + out.domain : "") +
           " · " + (out.contacts || []).length + " contacts stored."
         );
