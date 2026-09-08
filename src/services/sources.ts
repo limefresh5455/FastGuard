@@ -16,6 +16,7 @@ export async function seedDefaultSources() {
     { code: "lookup_address", name: "Manual address lookup", category: "lookup" },
     { code: "discover_signal", name: "Name + address discover", category: "news" },
     { code: "apollo_lookup", name: "Apollo company lookup", category: "lookup" },
+    { code: "llm_lookup", name: "LLM company lookup (Apollo fallback)", category: "lookup" },
   ];
   for (const row of rows) {
     await prisma.source.upsert({

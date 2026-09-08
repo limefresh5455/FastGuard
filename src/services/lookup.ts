@@ -1,10 +1,10 @@
 import { prisma } from "../db/client";
 import { resolveConstructionStage } from "../lib/constructionFit";
 import { classifyLead, extractPlaceEntities } from "../llm/classify";
-import { extractCompanyLookupCandidates, looksLikeNewsHeadline } from "../lib/extract";
+import { extractCompanyLookupCandidates, looksLikeNewsHeadline, moneyInText } from "../lib/extract";
 import { normalizeCompanyName } from "../lib/normalize";
 import { isPersonName, scoreLead } from "../scoring/scoreLead";
-import { lookupCompanyContactsFromApollo, lookupCompanyContactsFromApolloCandidates } from "./apollo";
+import { lookupCompanyContactsFromApolloCandidates, type ApolloCompanyHit } from "./apollo";
 import { persistContactsForCompany, syncProjectFromClassification } from "./enrich";
 import { gatherCompanyIntel, gatherSourceText, websitePageUrls } from "./fetchPublic";
 import { searchNews } from "./newsSearch";
@@ -170,6 +170,7 @@ async function loadCompanyCard(companyId: string) {
       companyType: company.companyType,
       website: company.website,
       phone: company.phone,
+      address: company.address,
       city: company.city,
       state: company.state,
     },
@@ -206,6 +207,144 @@ async function loadCompanyCard(companyId: string) {
   };
 }
 
+function hostFromUrl(url?: string | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url.startsWith("http") ? url : `https://${url}`).hostname.replace(/^www\./, "") || null;
+  } catch {
+    return null;
+  }
+}
+
+async function lookupCompanyByLlm(params: {
+  name: string;
+  description: string;
+  existing: {
+    id: string;
+    name: string;
+    normalizedName: string;
+    website: string | null;
+    phone: string | null;
+    address: string | null;
+    city: string | null;
+    state: string | null;
+    sourceUrl: string | null;
+    triggers: Array<{ headline: string; sourceUrl: string }>;
+    projects: Array<{ id: string }>;
+  } | null;
+}) {
+  const candidates = extractCompanyLookupCandidates(params.name, params.description);
+  const resolvedName =
+    candidates.find((c) => !looksLikeNewsHeadline(c)) || candidates[0] || params.name;
+  const city = params.existing?.city || "South Florida";
+  const state = params.existing?.state || "FL";
+  const triggerUrls = params.existing?.triggers.map((t) => t.sourceUrl).filter(Boolean) ?? [];
+
+  const intel = await gatherCompanyIntel({
+    name: resolvedName,
+    website: params.existing?.website,
+    city,
+    extraUrls: [params.existing?.sourceUrl, ...triggerUrls],
+  });
+
+  const pageText = [params.description, params.name !== params.description ? params.name : "", intel.text]
+    .filter(Boolean)
+    .join("\n\n");
+
+  let companyRecord;
+  if (params.existing) {
+    const headlineName = looksLikeNewsHeadline(params.existing.name);
+    companyRecord = await prisma.company.update({
+      where: { id: params.existing.id },
+      data: {
+        ...(headlineName && resolvedName !== params.existing.name
+          ? { name: resolvedName, normalizedName: normalizeCompanyName(resolvedName) }
+          : {}),
+        website: intel.website || params.existing.website,
+        city: params.existing.city || city,
+        state: params.existing.state || state,
+        sourceUrl: params.existing.sourceUrl || triggerUrls[0] || intel.urls[0],
+      },
+    });
+  } else {
+    companyRecord = await upsertCompany(resolvedName, {
+      city,
+      state,
+      website: intel.website,
+      sourceUrl: triggerUrls[0] || intel.urls[0],
+    });
+  }
+
+  const { contactId, saved, profile } = await persistContactsForCompany({
+    companyId: companyRecord.id,
+    companyName: resolvedName,
+    website: intel.website || companyRecord.website,
+    phone: companyRecord.phone,
+    sourceUrls: intel.urls,
+    pageText,
+    extraPeople: intel.people,
+  });
+
+  const linked = contactId ? await prisma.contact.findUnique({ where: { id: contactId } }) : null;
+  const classified = await classifyLead({
+    company: companyRecord,
+    contact: linked,
+    project: null,
+    source: "llm_lookup",
+    extractedPagePreview: pageText.slice(0, 4000),
+    extractedProfile: {
+      company_name: profile.company_name,
+      project_name: profile.project_name,
+      project_stage: profile.project_stage,
+      project_type: profile.project_type,
+    },
+  });
+
+  await syncProjectFromClassification({
+    companyId: companyRecord.id,
+    companyName: profile.company_name || resolvedName,
+    projectId: params.existing?.projects[0]?.id,
+    city: profile.project_city || companyRecord.city,
+    state: companyRecord.state,
+    classified,
+    extras: {
+      name: profile.project_name,
+      address: profile.project_address,
+      city: profile.project_city,
+      projectType: profile.project_type,
+      projectStage: profile.project_stage,
+      projectValue: profile.project_value ?? moneyInText(pageText),
+      sourceUrl: intel.urls[0],
+    },
+  });
+
+  const { lead } = await finalizeLead({
+    companyId: companyRecord.id,
+    contactId,
+    source: "llm_lookup",
+  });
+
+  await seedDefaultSources();
+  await bumpSource("llm_lookup", "LLM company lookup (Apollo fallback)", "lookup", 1);
+
+  const card = await loadCompanyCard(companyRecord.id);
+  if (!card) throw new Error("company not found");
+
+  return {
+    query: params.name,
+    resolvedQuery: profile.company_name || resolvedName,
+    description: params.description || null,
+    enriched: true,
+    source: "llm",
+    domain: hostFromUrl(intel.website || companyRecord.website),
+    contactsSaved: saved,
+    leadId: lead.id,
+    score: lead.score,
+    ...card,
+    otherMatches: [],
+  };
+}
+
 export async function findCompanyByName(input: string | { name?: string; description?: string; companyId?: string }) {
   const opts = typeof input === "string" ? { name: input } : input;
   let name = opts.name?.trim() ?? "";
@@ -234,11 +373,12 @@ export async function findCompanyByName(input: string | { name?: string; descrip
   }
 
   if (!name && !description) throw new Error("company name is required");
+  if (!description) description = name;
 
   let candidates = extractCompanyLookupCandidates(name, description);
   if (!candidates.length && name) candidates = [name];
 
-  let apollo;
+  let apollo: ApolloCompanyHit | null = null;
   let resolvedQuery = name;
   try {
     const out = await lookupCompanyContactsFromApolloCandidates(candidates);
@@ -246,16 +386,25 @@ export async function findCompanyByName(input: string | { name?: string; descrip
     resolvedQuery = out.query;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg !== "company not found" || !description) throw err;
-    const place = await extractPlaceEntities({
-      address: name || "South Florida",
-      sourceText: `${name}. ${description}`,
-    });
-    const llmCandidates = place.companies.map((c) => c.name).filter(Boolean);
-    if (!llmCandidates.length) throw err;
-    const out = await lookupCompanyContactsFromApolloCandidates(llmCandidates);
-    apollo = out.hit;
-    resolvedQuery = out.query;
+    if (msg !== "company not found") throw err;
+    try {
+      const place = await extractPlaceEntities({
+        address: name || "South Florida",
+        sourceText: `${name}. ${description}`,
+      });
+      const llmCandidates = place.companies.map((c) => c.name).filter(Boolean);
+      if (llmCandidates.length) {
+        const out = await lookupCompanyContactsFromApolloCandidates(llmCandidates);
+        apollo = out.hit;
+        resolvedQuery = out.query;
+      }
+    } catch {
+      /* fall through to full LLM lookup */
+    }
+  }
+
+  if (!apollo) {
+    return lookupCompanyByLlm({ name, description, existing });
   }
 
   const apolloNorm = normalizeCompanyName(apollo.name) || apollo.name.toLowerCase();

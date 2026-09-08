@@ -279,7 +279,7 @@
         if (desc) url += "&description=" + encodeURIComponent(desc);
         return url;
       }
-      if (manual) return "/api/company?name=" + encodeURIComponent(manual);
+      if (manual) return "/api/company?name=" + encodeURIComponent(manual) + "&description=" + encodeURIComponent(manual);
       return null;
     }
     function currentLocation() {
@@ -568,15 +568,16 @@
       const c = selectedCompany();
       if (!url) return toast("Enter a company name to look up in Apollo.", true);
       busy(true, this);
-      toast("Looking up " + (c ? c.name : $("lookup").value.trim()) + " in Apollo…");
+      toast("Looking up " + (c ? c.name : $("lookup").value.trim()) + "…");
       try {
         const out = await api(url);
         await load();
         state.selectedId = out.company && out.company.id;
         state.tab = "companies";
         render();
+        const via = out.source === "llm" ? "LLM" : "Apollo";
         toast(
-          "Apollo: " + (out.company && out.company.name) +
+          via + ": " + (out.company && out.company.name) +
           (out.resolvedQuery && out.resolvedQuery !== out.query ? " · matched " + out.resolvedQuery : "") +
           (out.domain ? " · " + out.domain : "") +
           " · " + (out.contacts || []).length + " contacts stored."

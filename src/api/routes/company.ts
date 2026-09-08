@@ -9,7 +9,7 @@ export async function companyRoutes(app: FastifyInstance) {
         tags: ["Company"],
         summary: "Find company domain and contacts by name (Apollo)",
         description:
-          "Looks up **one company** in Apollo.io by name, saved company id, or headline/description. If the name is a news headline, pass `description` or `id` so the service can extract the real company and fetch contacts.",
+          "Looks up a company in Apollo.io first. If Apollo cannot find a match, falls back to LLM extraction from the headline/description, news, and public pages to save contacts, address, and project info.",
         querystring: {
           type: "object",
           additionalProperties: false,
