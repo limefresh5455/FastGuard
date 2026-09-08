@@ -38,6 +38,8 @@ const EnvSchema = z.object({
   OPENROUTER_BASE_URL: z.string().default("https://openrouter.ai/api/v1"),
   OPENROUTER_MODEL: z.string().default("nvidia/nemotron-3.5-lightning:free"),
   CRAWLER_USER_AGENT: z.string().default("FastGuardLeadEngine/1.0"),
+  APOLLO_API_KEY: z.string().optional().default(""),
+  APOLLO_REVEAL_EMAILS: z.string().optional().default("true"),
 });
 
 export const env = EnvSchema.parse(process.env);

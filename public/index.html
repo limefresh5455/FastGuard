@@ -192,8 +192,8 @@
 
   <div class="toolbar">
     <input id="search" type="search" placeholder="Filter company names…" />
-    <input id="lookup" type="text" placeholder="Lookup company by name" />
-    <button class="primary" id="btn-lookup">Lookup &amp; enrich</button>
+    <input id="lookup" type="text" placeholder="Company name — Apollo domain &amp; contacts" />
+    <button class="primary" id="btn-lookup">Lookup in Apollo</button>
     <button class="primary" id="btn-discover">Discover South Florida</button>
     <button id="btn-enrich">Enrich contacts</button>
     <button id="btn-dedupe">Dedupe</button>
@@ -299,6 +299,8 @@
       }
       state.selectedId = c.id;
       const loc = [c.city, c.state].filter(Boolean).join(", ");
+      let domain = "";
+      try { domain = c.website ? new URL(c.website).hostname.replace(/^www\./, "") : ""; } catch { domain = ""; }
       const contacts = (c.contacts || []).map((p) => `<tr>
         <td>${dash(p.name)}</td><td>${dash(p.title)}</td><td>${dash(p.email)}</td><td>${dash(p.phone)}</td>
       </tr>`);
@@ -317,6 +319,7 @@
         <h2>${esc(c.name)}</h2>
         <div class="meta">${dash(c.companyType)} · ${dash(loc)}</div>
         <dl class="kv">
+          <dt>Domain</dt><dd>${dash(domain)}</dd>
           <dt>Website</dt><dd>${c.website ? `<a href="${esc(c.website)}" target="_blank" rel="noopener">${esc(c.website)}</a>` : "—"}</dd>
           <dt>Phone</dt><dd>${dash(c.phone)}</dd>
           <dt>Source</dt><dd>${c.sourceUrl ? `<a href="${esc(c.sourceUrl)}" target="_blank" rel="noopener">${esc(c.sourceUrl)}</a>` : "—"}</dd>
@@ -422,17 +425,22 @@
         toast("Database cleared. Removed " + (d.companies || 0) + " companies, " + (d.leads || 0) + " leads, " + (d.contacts || 0) + " contacts.");
       } catch (e) { toast(e.message, true); } finally { busy(false); }
     };
+    $("lookup").onkeydown = (e) => { if (e.key === "Enter") $("btn-lookup").click(); };
     $("btn-lookup").onclick = async () => {
       const name = $("lookup").value.trim();
-      if (!name) return toast("Enter a company name to look up.", true);
-      busy(true); toast("Looking up " + name + "…");
+      if (!name) return toast("Enter a company name to look up in Apollo.", true);
+      busy(true); toast("Looking up " + name + " in Apollo…");
       try {
         const out = await api("/api/company?name=" + encodeURIComponent(name));
         await load();
         state.selectedId = out.company && out.company.id;
         state.tab = "companies";
         render();
-        toast("Loaded " + (out.company && out.company.name) + " with " + (out.contacts || []).length + " contacts.");
+        toast(
+          "Apollo: " + (out.company && out.company.name) +
+          (out.domain ? " · " + out.domain : "") +
+          " · " + (out.contacts || []).length + " contacts stored."
+        );
       } catch (e) { toast(e.message, true); } finally { busy(false); }
     };
 

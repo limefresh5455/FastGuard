@@ -3,12 +3,19 @@ import { resolveConstructionStage } from "../lib/constructionFit";
 import { classifyLead, extractPlaceEntities } from "../llm/classify";
 import { normalizeCompanyName } from "../lib/normalize";
 import { isPersonName, scoreLead } from "../scoring/scoreLead";
+import { lookupCompanyContactsFromApollo } from "./apollo";
 import { persistContactsForCompany, syncProjectFromClassification } from "./enrich";
 import { gatherCompanyIntel, gatherSourceText, websitePageUrls } from "./fetchPublic";
 import { searchNews } from "./newsSearch";
 import { bumpSource, seedDefaultSources } from "./sources";
 
-async function upsertCompany(name: string, extra: { website?: string | null; city?: string | null; state?: string | null }) {
+async function upsertCompany(name: string, extra: {
+  website?: string | null;
+  city?: string | null;
+  state?: string | null;
+  phone?: string | null;
+  sourceUrl?: string | null;
+}) {
   const normalizedName = normalizeCompanyName(name) || name.toLowerCase();
   const found = await prisma.company.findFirst({ where: { normalizedName } });
   if (found) {
@@ -18,6 +25,8 @@ async function upsertCompany(name: string, extra: { website?: string | null; cit
         website: extra.website || found.website,
         city: extra.city || found.city,
         state: extra.state || found.state,
+        phone: extra.phone || found.phone,
+        sourceUrl: extra.sourceUrl || found.sourceUrl,
       },
     });
   }
@@ -28,6 +37,8 @@ async function upsertCompany(name: string, extra: { website?: string | null; cit
       website: extra.website,
       city: extra.city,
       state: extra.state ?? "FL",
+      phone: extra.phone,
+      sourceUrl: extra.sourceUrl,
     },
   });
 }
@@ -197,45 +208,82 @@ async function loadCompanyCard(companyId: string) {
 export async function findCompanyByName(name: string) {
   const q = name.trim();
   if (!q) throw new Error("company name is required");
-  const normalized = normalizeCompanyName(q) || q.toLowerCase();
+  const apollo = await lookupCompanyContactsFromApollo(q);
+  const apolloNorm = normalizeCompanyName(apollo.name) || apollo.name.toLowerCase();
+  const queryNorm = normalizeCompanyName(q) || q.toLowerCase();
 
   const matches = await prisma.company.findMany({
     where: {
       OR: [
-        { normalizedName: normalized },
+        { normalizedName: apolloNorm },
+        { normalizedName: queryNorm },
         { name: { contains: q, mode: "insensitive" } },
-        { normalizedName: { contains: normalized, mode: "insensitive" } },
+        { name: { contains: apollo.name, mode: "insensitive" } },
       ],
     },
     take: 10,
     orderBy: { name: "asc" },
   });
   matches.sort((a, b) => {
-    const aExact = a.normalizedName === normalized ? 0 : 1;
-    const bExact = b.normalizedName === normalized ? 0 : 1;
+    const aExact = a.normalizedName === apolloNorm || a.normalizedName === queryNorm ? 0 : 1;
+    const bExact = b.normalizedName === apolloNorm || b.normalizedName === queryNorm ? 0 : 1;
     return aExact - bExact;
   });
 
-  let company: (typeof matches)[0] | undefined = matches[0];
-  const result = await enrichByCompany({
-    name: q,
-    website: company?.website ?? undefined,
-    city: company?.city || "South Florida",
-    state: company?.state || "FL",
-  });
-  company =
-    (result.company?.id
-      ? await prisma.company.findUnique({ where: { id: result.company.id } })
-      : null) ??
-    (await prisma.company.findFirst({ where: { normalizedName: normalized } })) ??
-    (await prisma.company.findFirst({ where: { name: { contains: q, mode: "insensitive" } } })) ??
-    undefined;
+  const extra = {
+    website: apollo.website,
+    city: apollo.city || "South Florida",
+    state: apollo.state || "FL",
+    phone: apollo.phone,
+    sourceUrl: apollo.linkedinUrl || apollo.website,
+  };
+  const company = matches[0]
+    ? await prisma.company.update({
+        where: { id: matches[0].id },
+        data: {
+          website: extra.website || matches[0].website,
+          city: extra.city || matches[0].city,
+          state: extra.state || matches[0].state,
+          phone: extra.phone || matches[0].phone,
+          sourceUrl: extra.sourceUrl || matches[0].sourceUrl,
+        },
+      })
+    : await upsertCompany(apollo.name, extra);
 
-  if (!company) throw new Error("company not found");
+  const sourceUrls = [apollo.linkedinUrl, extra.website].filter((u): u is string => Boolean(u));
+  const { contactId, saved } = await persistContactsForCompany({
+    companyId: company.id,
+    companyName: apollo.name,
+    website: extra.website || company.website,
+    phone: extra.phone || company.phone,
+    sourceUrls,
+    pageText: "",
+    extraPeople: apollo.people,
+  });
+
+  const { lead } = await finalizeLead({
+    companyId: company.id,
+    contactId,
+    source: "apollo_lookup",
+  });
+
+  await seedDefaultSources();
+  await bumpSource("apollo_lookup", "Apollo company lookup", "lookup", 1);
+
   const card = await loadCompanyCard(company.id);
   if (!card) throw new Error("company not found");
   const others = matches.filter((m) => m.id !== company.id).map((m) => ({ id: m.id, name: m.name }));
-  return { query: q, enriched: true, contactsSaved: result.contactsSaved, ...card, otherMatches: others };
+  return {
+    query: q,
+    enriched: true,
+    source: "apollo",
+    domain: apollo.domain,
+    contactsSaved: saved,
+    leadId: lead.id,
+    score: lead.score,
+    ...card,
+    otherMatches: others,
+  };
 }
 
 export async function enrichByAddress(input: { address: string; city?: string; state?: string }) {
