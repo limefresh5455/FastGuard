@@ -67,6 +67,36 @@ function inferTrigger(text: string): string {
   return "project_signal";
 }
 
+const US_STATES: Record<string, string> = {
+  alabama: "AL", alaska: "AK", arizona: "AZ", arkansas: "AR", california: "CA",
+  colorado: "CO", connecticut: "CT", delaware: "DE", florida: "FL", georgia: "GA",
+  hawaii: "HI", idaho: "ID", illinois: "IL", indiana: "IN", iowa: "IA",
+  kansas: "KS", kentucky: "KY", louisiana: "LA", maine: "ME", maryland: "MD",
+  massachusetts: "MA", michigan: "MI", minnesota: "MN", mississippi: "MS", missouri: "MO",
+  montana: "MT", nebraska: "NE", nevada: "NV", "new hampshire": "NH", "new jersey": "NJ",
+  "new mexico": "NM", "new york": "NY", "north carolina": "NC", "north dakota": "ND", ohio: "OH",
+  oklahoma: "OK", oregon: "OR", pennsylvania: "PA", "rhode island": "RI", "south carolina": "SC",
+  "south dakota": "SD", tennessee: "TN", texas: "TX", utah: "UT", vermont: "VT",
+  virginia: "VA", washington: "WA", "west virginia": "WV", wisconsin: "WI", wyoming: "WY",
+};
+
+function parseLocation(location: string): { city: string; state: string | null } {
+  const raw = location.trim();
+  const comma = raw.match(/^(.*?),\s*([^,]+)$/);
+  if (comma) {
+    const city = comma[1].trim() || raw;
+    const rest = comma[2].trim();
+    if (/^[A-Za-z]{2}$/.test(rest)) return { city, state: rest.toUpperCase() };
+    const named = US_STATES[rest.toLowerCase()];
+    if (named) return { city, state: named };
+  }
+  const lower = raw.toLowerCase();
+  for (const [name, code] of Object.entries(US_STATES)) {
+    if (lower.includes(name)) return { city: raw, state: code };
+  }
+  return { city: raw, state: null };
+}
+
 async function fetchHits(location: string): Promise<NewsHit[]> {
   const hits: NewsHit[] = [];
   const seen = new Set<string>();
@@ -92,6 +122,7 @@ async function fetchHits(location: string): Promise<NewsHit[]> {
 }
 
 export async function discoverByLocation(location: string) {
+  const { city, state } = parseLocation(location);
   const hits = await fetchHits(location);
   let created = 0;
   let skipped = 0;
@@ -125,8 +156,8 @@ export async function discoverByLocation(location: string) {
         data: {
           name: companyName,
           normalizedName,
-          city: hit.city,
-          state: "FL",
+          city: hit.city || city,
+          state,
           sourceUrl: hit.link,
           companyType: "CONSTRUCTION_COMPANY",
         },
@@ -136,8 +167,8 @@ export async function discoverByLocation(location: string) {
       data: {
         companyId: company.id,
         name: hit.title.slice(0, 180),
-        city: hit.city,
-        state: "FL",
+        city: hit.city || city,
+        state,
         sourceUrl: hit.link,
         projectType: "UNKNOWN",
         projectStage,

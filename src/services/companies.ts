@@ -93,6 +93,7 @@ export function toCompanyCard(company: {
       date: t.triggerDate,
       sourceUrl: t.sourceUrl,
     })),
+    latestTriggerDate: company.triggers[0]?.triggerDate ?? company.createdAt,
     leads: company.leads.map((l) => ({
       id: l.id,
       score: l.score,
@@ -117,11 +118,15 @@ export async function listCompanies(q?: string) {
           ],
         }
       : undefined,
-    orderBy: { name: "asc" },
+    orderBy: { createdAt: "desc" },
     take: 500,
     include: companyInclude,
   });
-  const cards = companies.map(toCompanyCard);
+  const cards = companies.map(toCompanyCard).sort((a, b) => {
+    const tb = new Date(b.latestTriggerDate).getTime();
+    const ta = new Date(a.latestTriggerDate).getTime();
+    return (Number.isNaN(tb) ? 0 : tb) - (Number.isNaN(ta) ? 0 : ta);
+  });
   return {
     count: cards.length,
     names: cards.map((c) => c.name),

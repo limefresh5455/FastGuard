@@ -95,6 +95,12 @@
       min-width: 220px;
       font: inherit;
     }
+    #location {
+      min-width: 200px;
+      max-width: 280px;
+      appearance: none;
+      -webkit-appearance: textfield;
+    }
     button {
       background: transparent;
       border: 1px solid var(--gold-dim);
@@ -132,14 +138,42 @@
     #view-companies { grid-template-columns: 320px 1fr; }
     .list, .detail, .table-wrap { overflow: auto; }
     .list { border-right: 1px solid var(--line); background: var(--panel); }
-    .co {
+    .co-head, .co {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 4px 12px;
       padding: 12px 14px;
       border-bottom: 1px solid var(--line);
-      cursor: pointer;
+      align-items: start;
     }
+    .co-head {
+      padding: 8px 14px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      position: sticky;
+      top: 0;
+      background: var(--panel);
+      z-index: 1;
+    }
+    .co { cursor: pointer; }
     .co:hover, .co.on { background: var(--focus); }
-    .co strong { display: block; font-size: 14px; }
-    .co em { color: var(--muted); font-style: normal; font-size: 12px; }
+    .co strong { font-size: 14px; font-weight: 650; }
+    .co .date, .co-head .date {
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      color: var(--gold);
+      font-size: 12px;
+    }
+    .co-head .date { color: var(--muted); }
+    .co em {
+      grid-column: 1 / -1;
+      color: var(--muted);
+      font-style: normal;
+      font-size: 12px;
+    }
     .detail { padding: 18px 22px 40px; }
     .empty { color: var(--muted); padding: 48px 24px; max-width: 520px; line-height: 1.5; }
     h2 { margin: 0 0 6px; font-size: 22px; font-weight: 650; }
@@ -179,7 +213,7 @@
       <div class="mark">FG</div>
       <div>
         <h1>Fast Guard</h1>
-        <p>Sales intelligence demo · South Florida</p>
+        <p>Sales intelligence demo · discover by location</p>
       </div>
     </div>
     <div class="header-links">
@@ -194,7 +228,8 @@
     <input id="search" type="search" placeholder="Filter company names…" />
     <input id="lookup" type="text" placeholder="Company name — Apollo domain &amp; contacts" />
     <button class="primary" id="btn-lookup">Lookup in Apollo</button>
-    <button class="primary" id="btn-discover">Discover South Florida</button>
+    <input id="location" type="text" placeholder="City, metro, or region" value="South Florida" autocomplete="off" />
+    <button class="primary" id="btn-discover">Discover</button>
     <button id="btn-enrich">Enrich contacts</button>
     <button id="btn-dedupe">Dedupe</button>
     <button id="btn-reload">Reload</button>
@@ -217,7 +252,15 @@
 
   <script>
     const $ = (id) => document.getElementById(id);
+    const LOC_KEY = "fg-location";
     const state = { companies: [], allLeads: [], qualifiedLeads: [], totals: {}, names: [], selectedId: null, tab: "companies", q: "" };
+
+    function currentLocation() {
+      return $("location").value.trim();
+    }
+    function rememberLocation(loc) {
+      try { localStorage.setItem(LOC_KEY, loc); } catch {}
+    }
 
     function esc(v) {
       return String(v ?? "").replace(/[&<>"'`]/g, (c) => ({
@@ -242,12 +285,47 @@
       return data;
     }
 
+    function ymd(raw) {
+      if (!raw) return "";
+      const s = String(raw);
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+      const d = new Date(raw);
+      if (Number.isNaN(d.getTime())) return "";
+      return d.toISOString().slice(0, 10);
+    }
+    function triggerDate(c) {
+      if (c && c.latestTriggerDate) return ymd(c.latestTriggerDate);
+      const latest = (c && c.triggers || []).reduce((best, t) => {
+        const d = ymd(t && t.date);
+        return d > best ? d : best;
+      }, "");
+      return latest || ymd(c && c.createdAt);
+    }
+    function newestFirst(a, b) {
+      const tb = triggerDate(b);
+      const ta = triggerDate(a);
+      if (tb === ta) return 0;
+      return tb < ta ? -1 : 1;
+    }
+    function leadDate(l) {
+      return ymd(l && l.trigger && l.trigger.date);
+    }
+    function leadsNewestFirst(list) {
+      return (list || []).slice().sort((a, b) => {
+        const tb = leadDate(b);
+        const ta = leadDate(a);
+        if (tb === ta) return (b.score || 0) - (a.score || 0);
+        return tb < ta ? -1 : 1;
+      });
+    }
     function filteredCompanies() {
       const q = state.q.trim().toLowerCase();
-      if (!q) return state.companies;
-      return state.companies.filter((c) =>
-        [c.name, c.city, c.companyType, c.website, c.phone].filter(Boolean).join(" ").toLowerCase().includes(q)
-      );
+      const rows = !q
+        ? state.companies.slice()
+        : state.companies.filter((c) =>
+            [c.name, c.city, c.companyType, c.website, c.phone].filter(Boolean).join(" ").toLowerCase().includes(q)
+          );
+      return rows.sort(newestFirst);
     }
 
     function renderStats() {
@@ -268,15 +346,17 @@
     function renderCompanyList() {
       const rows = filteredCompanies();
       if (!rows.length) {
-        $("company-list").innerHTML = `<div class="empty">No companies yet. Click <b>Discover South Florida</b>. Company names will appear here.</div>`;
+        $("company-list").innerHTML = `<div class="empty">No companies yet. Enter a location and click <b>Discover</b>. Company names will appear here.</div>`;
         return;
       }
-      $("company-list").innerHTML = rows.map((c) => {
+      $("company-list").innerHTML = `<div class="co-head"><span>Company</span><span class="date">Date</span></div>` + rows.map((c) => {
         const top = (c.leads && c.leads[0]) ? c.leads[0].score : "—";
         const loc = [c.city, c.state].filter(Boolean).join(", ");
+        const when = triggerDate(c);
         const on = c.id === state.selectedId ? " on" : "";
         return `<div class="co${on}" data-id="${esc(c.id)}">
           <strong>${esc(c.name)}</strong>
+          <span class="date">${dash(when)}</span>
           <em>${dash(loc)} · ${dash(c.companyType)} · score ${esc(top)}</em>
         </div>`;
       }).join("");
@@ -307,8 +387,8 @@
       const projects = (c.projects || []).map((p) => `<tr>
         <td>${dash(p.name)}</td><td>${dash(p.address)}</td><td>${dash(p.type)}</td><td>${dash(p.stage)}</td>
       </tr>`);
-      const triggers = (c.triggers || []).map((t) => `<tr>
-        <td>${dash(t.type)}</td><td>${dash(t.headline)}</td><td>${dash(t.date && String(t.date).slice(0, 10))}</td>
+      const triggers = (c.triggers || []).slice().sort((a, b) => ymd(b.date).localeCompare(ymd(a.date))).map((t) => `<tr>
+        <td>${dash(t.type)}</td><td>${dash(t.headline)}</td><td>${dash(ymd(t.date))}</td>
         <td>${t.sourceUrl ? `<a href="${esc(t.sourceUrl)}" target="_blank" rel="noopener">source</a>` : "—"}</td>
       </tr>`);
       const leads = (c.leads || []).map((l) => `<tr>
@@ -317,8 +397,10 @@
       </tr>`);
       $("company-detail").innerHTML = `
         <h2>${esc(c.name)}</h2>
-        <div class="meta">${dash(c.companyType)} · ${dash(loc)}</div>
+        <div class="meta">${dash(c.companyType)} · ${dash(loc)} · ${dash(triggerDate(c))}</div>
         <dl class="kv">
+          <dt>Date</dt><dd>${dash(triggerDate(c))}</dd>
+          <dt>Added</dt><dd>${dash(ymd(c.createdAt))}</dd>
           <dt>Domain</dt><dd>${dash(domain)}</dd>
           <dt>Website</dt><dd>${c.website ? `<a href="${esc(c.website)}" target="_blank" rel="noopener">${esc(c.website)}</a>` : "—"}</dd>
           <dt>Phone</dt><dd>${dash(c.phone)}</dd>
@@ -336,8 +418,9 @@
     }
 
     function leadRows(list) {
-      return (list || []).map((l) => `<tr>
+      return leadsNewestFirst(list).map((l) => `<tr>
         <td>${esc(l.company)}</td>
+        <td>${dash(leadDate(l))}</td>
         <td class="score">${esc(l.score)}</td>
         <td>${dash(l.contact && l.contact.name)}</td>
         <td>${dash(l.contact && l.contact.email)}</td>
@@ -352,7 +435,7 @@
 
     function renderLeadTable(target, list) {
       $(target).innerHTML = table(
-        ["Company", "Score", "Contact", "Email", "Phone", "Project", "Trigger", "Service", "Status", "Source"],
+        ["Company", "Date", "Score", "Contact", "Email", "Phone", "Project", "Trigger", "Service", "Status", "Source"],
         leadRows(list)
       );
     }
@@ -371,7 +454,7 @@
 
     async function load() {
       const data = await api("/api/dashboard");
-      state.companies = data.companies || [];
+      state.companies = (data.companies || []).slice().sort(newestFirst);
       state.names = data.names || [];
       state.allLeads = data.allLeads || [];
       state.qualifiedLeads = data.qualifiedLeads || [];
@@ -384,22 +467,32 @@
       b.onclick = () => { state.tab = b.dataset.tab; render(); };
     });
     $("search").oninput = (e) => { state.q = e.target.value; render(); };
+    try {
+      const saved = localStorage.getItem(LOC_KEY);
+      if (saved) $("location").value = saved;
+    } catch {}
+    $("location").onchange = () => { const loc = currentLocation(); if (loc) rememberLocation(loc); };
+    $("location").onkeydown = (e) => { if (e.key === "Enter") $("btn-discover").click(); };
     $("btn-reload").onclick = async () => { busy(true); try { await load(); toast("Reloaded " + state.companies.length + " companies."); } catch (e) { toast(e.message, true); } finally { busy(false); } };
     $("btn-discover").onclick = async () => {
-      busy(true); toast("Scanning South Florida construction news… this can take a minute.");
+      const location = currentLocation();
+      if (!location) return toast("Enter a city, metro, or region to discover.", true);
+      rememberLocation(location);
+      busy(true); toast("Scanning " + location + " construction news… this can take a minute.");
       try {
-        const out = await api("/api/discover", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ location: "South Florida" }) });
+        const out = await api("/api/discover", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ location }) });
         await load();
         const names = (out.names || []).join(", ");
-        toast("Discover: " + out.created + " new / " + out.found + " found. " + (names || "No new company names."));
+        toast("Discover " + location + ": " + out.created + " new / " + out.found + " found. " + (names || "No new company names."));
       } catch (e) { toast(e.message, true); } finally { busy(false); }
     };
     $("btn-enrich").onclick = async () => {
-      busy(true); toast("Enriching contacts from public pages…");
-      let processed = 0, contactsSaved = 0, remaining = 0;
-      const names = [];
+      const location = currentLocation();
+      busy(true); toast("Enriching contacts from public pages" + (location ? " in " + location : "") + "…");
       try {
-        const out = await api("/api/leads/enrich-all", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 50, location: "South Florida" }) });
+        const body = { limit: 50 };
+        if (location) body.location = location;
+        const out = await api("/api/leads/enrich-all", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
         await load();
         toast("Enriched " + out.processed + " leads, saved " + out.contactsSaved + " contacts. " + (out.names || []).join(", "));
       } catch (e) { toast(e.message, true); } finally { busy(false); }
@@ -445,7 +538,7 @@
     };
 
     load().then(() => {
-      toast(state.companies.length ? state.companies.length + " companies loaded." : "Database is empty. Discover South Florida to populate company names.");
+      toast(state.companies.length ? state.companies.length + " companies loaded." : "Database is empty. Enter a location and click Discover.");
     }).catch((e) => toast(e.message, true));
   </script>
 </body>
