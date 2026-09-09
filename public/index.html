@@ -101,6 +101,15 @@
       appearance: none;
       -webkit-appearance: textfield;
     }
+    .toolbar + .toolbar {
+      border-top: 0;
+      padding-top: 10px;
+    }
+    #prompt {
+      flex: 1 1 360px;
+      min-width: 280px;
+      max-width: none;
+    }
     button {
       background: transparent;
       border: 1px solid var(--gold-dim);
@@ -115,6 +124,7 @@
     button.danger:hover { background: #3a1f1c; }
     button:disabled { opacity: 0.45; cursor: not-allowed; }
     button.loading { cursor: wait; }
+    @keyframes spin { to { transform: rotate(360deg); } }
     .tabs { display: flex; gap: 0; padding: 0 18px; border-bottom: 1px solid var(--line); }
     .tabs button {
       border: 0;
@@ -162,6 +172,36 @@
     .co { cursor: pointer; }
     .co:hover, .co.on { background: var(--focus); }
     .co strong { font-size: 14px; font-weight: 650; }
+    .co-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+    }
+    .co .apollo-btn {
+      position: relative;
+      padding: 3px 8px;
+      font-size: 11px;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+    .co .apollo-btn.loading {
+      padding-left: 22px;
+      cursor: wait;
+    }
+    .co .apollo-btn.loading::before {
+      content: "";
+      position: absolute;
+      left: 6px;
+      top: 50%;
+      width: 10px;
+      height: 10px;
+      margin-top: -5px;
+      border: 2px solid rgba(22, 20, 14, 0.25);
+      border-top-color: #16140e;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
     .co .date, .co-head .date {
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
@@ -225,10 +265,12 @@
 
   <section class="stats" id="stats"></section>
 
+  <div class="toolbar prompt-bar">
+    <input id="prompt" type="text" placeholder="Custom prompt, e.g. hotel renovation projects, multifamily tower construction" />
+    <button class="primary" id="btn-discover-prompt">Discover with prompt</button>
+  </div>
   <div class="toolbar">
     <input id="search" type="search" placeholder="Filter company names…" />
-    <input id="lookup" type="text" placeholder="Company name — Apollo lookup" />
-    <button class="primary" id="btn-lookup" disabled>Lookup in Apollo</button>
     <input id="location" type="text" placeholder="City, metro, or region" value="South Florida" autocomplete="off" />
     <button class="primary" id="btn-discover">Discover</button>
     <button id="btn-enrich">Enrich contacts</button>
@@ -254,11 +296,9 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const LOC_KEY = "fg-location";
+    const PROMPT_KEY = "fg-prompt";
     const state = { companies: [], allLeads: [], qualifiedLeads: [], totals: {}, names: [], selectedId: null, tab: "companies", q: "" };
 
-    function selectedCompany() {
-      return state.companies.find((c) => c.id === state.selectedId) || null;
-    }
     function companyLookupDescription(c) {
       if (!c) return "";
       const parts = [];
@@ -266,21 +306,13 @@
       if (c.projects && c.projects.length) parts.push(...c.projects.map((p) => p.name));
       return parts.filter(Boolean).join(". ");
     }
-    function updateLookupButton() {
-      $("btn-lookup").disabled = !$("lookup").value.trim();
-    }
-    function lookupCompanyUrl() {
-      const manual = $("lookup").value.trim();
-      const c = selectedCompany();
-      if (c) {
-        let url = "/api/company?id=" + encodeURIComponent(c.id);
-        if (manual) url += "&name=" + encodeURIComponent(manual);
-        const desc = companyLookupDescription(c);
-        if (desc) url += "&description=" + encodeURIComponent(desc);
-        return url;
-      }
-      if (manual) return "/api/company?name=" + encodeURIComponent(manual) + "&description=" + encodeURIComponent(manual);
-      return null;
+    function lookupCompanyUrl(c) {
+      if (!c) return null;
+      let url = "/api/company?id=" + encodeURIComponent(c.id);
+      if (c.name) url += "&name=" + encodeURIComponent(c.name);
+      const desc = companyLookupDescription(c);
+      if (desc) url += "&description=" + encodeURIComponent(desc);
+      return url;
     }
     function currentLocation() {
       return $("location").value.trim();
@@ -305,7 +337,18 @@
         b.classList.toggle("loading", Boolean(on && activeBtn && b === activeBtn));
         b.disabled = on ? true : false;
       });
-      if (!on) updateLookupButton();
+      document.querySelectorAll(".apollo-btn").forEach((b) => {
+        const isActive = Boolean(on && activeBtn && b === activeBtn);
+        b.classList.toggle("loading", isActive);
+        b.disabled = on ? true : false;
+        if (isActive && on) {
+          if (!b.dataset.label) b.dataset.label = b.textContent;
+          b.textContent = "Looking up…";
+        } else if (b.dataset.label) {
+          b.textContent = b.dataset.label;
+          delete b.dataset.label;
+        }
+      });
     }
     async function api(url, opts) {
       const res = await fetch(url, opts);
@@ -387,12 +430,22 @@
         const on = c.id === state.selectedId ? " on" : "";
         return `<div class="co${on}" data-id="${esc(c.id)}">
           <strong>${esc(c.name)}</strong>
-          <span class="date">${dash(when)}</span>
+          <div class="co-right">
+            <button type="button" class="primary apollo-btn" data-id="${esc(c.id)}">Lookup in Apollo</button>
+            <span class="date">${dash(when)}</span>
+          </div>
           <em>${dash(loc)} · ${dash(c.companyType)} · score ${esc(top)}</em>
         </div>`;
       }).join("");
       $("company-list").querySelectorAll(".co").forEach((el) => {
         el.onclick = () => { state.selectedId = el.getAttribute("data-id"); render(); };
+      });
+      $("company-list").querySelectorAll(".apollo-btn").forEach((btn) => {
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          const c = state.companies.find((x) => x.id === btn.getAttribute("data-id"));
+          if (c) lookupCompany(c, btn);
+        };
       });
     }
 
@@ -445,17 +498,7 @@
         ${table(["Type", "Headline", "Date", "Source"], triggers)}
         <h3>Leads</h3>
         ${table(["Score", "Recommended service", "Status", "Source"], leads)}
-        <p style="margin-top:18px"><button class="primary" id="btn-lookup-company">Lookup in Apollo</button></p>
       `;
-      const lookupBtn = $("btn-lookup-company");
-      if (lookupBtn) {
-        lookupBtn.disabled = !$("lookup").value.trim();
-        lookupBtn.onclick = () => {
-          if (!$("lookup").value.trim() && c.name) $("lookup").value = c.name;
-          updateLookupButton();
-          $("btn-lookup").click();
-        };
-      }
     }
 
     function leadRows(list) {
@@ -514,6 +557,14 @@
     } catch {}
     $("location").onchange = () => { const loc = currentLocation(); if (loc) rememberLocation(loc); };
     $("location").onkeydown = (e) => { if (e.key === "Enter") $("btn-discover").click(); };
+    try {
+      const savedPrompt = localStorage.getItem(PROMPT_KEY);
+      if (savedPrompt) $("prompt").value = savedPrompt;
+    } catch {}
+    $("prompt").onchange = () => {
+      try { localStorage.setItem(PROMPT_KEY, $("prompt").value.trim()); } catch {}
+    };
+    $("prompt").onkeydown = (e) => { if (e.key === "Enter") $("btn-discover-prompt").click(); };
     $("btn-reload").onclick = async () => { busy(true, $("btn-reload")); try { await load(); toast("Reloaded " + state.companies.length + " companies."); } catch (e) { toast(e.message, true); } finally { busy(false); } };
     $("btn-discover").onclick = async () => {
       const location = currentLocation();
@@ -525,6 +576,27 @@
         await load();
         const names = (out.names || []).join(", ");
         toast("Discover " + location + ": " + out.created + " new / " + out.found + " found. " + (names || "No new company names."));
+      } catch (e) { toast(e.message, true); } finally { busy(false); }
+    };
+    $("btn-discover-prompt").onclick = async () => {
+      const location = currentLocation();
+      const prompt = $("prompt").value.trim();
+      if (!location) return toast("Enter a city, metro, or region to discover.", true);
+      if (!prompt) return toast("Enter a custom prompt to search with.", true);
+      rememberLocation(location);
+      $("prompt").value = "";
+      try { localStorage.removeItem(PROMPT_KEY); } catch {}
+      busy(true, $("btn-discover-prompt"));
+      toast('Searching "' + prompt + '" in ' + location + "… this can take a minute.");
+      try {
+        const out = await api("/api/discover/prompt", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ location, prompt }),
+        });
+        await load();
+        const names = (out.names || []).join(", ");
+        toast("Prompt discover " + location + ": " + out.created + " new / " + out.found + " found. " + (names || "No new company names."));
       } catch (e) { toast(e.message, true); } finally { busy(false); }
     };
     $("btn-enrich").onclick = async () => {
@@ -559,16 +631,11 @@
         toast("Database cleared. Removed " + (d.companies || 0) + " companies, " + (d.leads || 0) + " leads, " + (d.contacts || 0) + " contacts.");
       } catch (e) { toast(e.message, true); } finally { busy(false); }
     };
-    $("lookup").oninput = () => updateLookupButton();
-    $("lookup").onkeydown = (e) => { if (e.key === "Enter" && $("lookup").value.trim()) $("btn-lookup").click(); };
-    updateLookupButton();
-    $("btn-lookup").onclick = async function () {
-      if (this.disabled) return;
-      const url = lookupCompanyUrl();
-      const c = selectedCompany();
-      if (!url) return toast("Enter a company name to look up in Apollo.", true);
-      busy(true, this);
-      toast("Looking up " + (c ? c.name : $("lookup").value.trim()) + "…");
+    async function lookupCompany(c, activeBtn) {
+      const url = lookupCompanyUrl(c);
+      if (!url) return toast("Company not found.", true);
+      busy(true, activeBtn || null);
+      toast("Looking up " + c.name + "…");
       try {
         const out = await api(url);
         await load();
@@ -583,7 +650,7 @@
           " · " + (out.contacts || []).length + " contacts stored."
         );
       } catch (e) { toast(e.message, true); } finally { busy(false); }
-    };
+    }
 
     load().then(() => {
       toast(state.companies.length ? state.companies.length + " companies loaded." : "Database is empty. Enter a location and click Discover.");

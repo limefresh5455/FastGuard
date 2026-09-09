@@ -11,6 +11,7 @@ export async function bumpSource(code: string, name: string, category: string, c
 export async function seedDefaultSources() {
   const rows = [
     { code: "construction_news", name: "South Florida construction news", category: "news" },
+    { code: "prompt_discover", name: "Prompt-based discover", category: "news" },
     { code: "property_news", name: "South Florida property news", category: "news" },
     { code: "lookup_company", name: "Manual company lookup", category: "lookup" },
     { code: "lookup_address", name: "Manual address lookup", category: "lookup" },

@@ -6,13 +6,15 @@ import { normalizeCompanyName } from "../lib/normalize";
 import { scoreLead } from "../scoring/scoreLead";
 import { bumpSource } from "./sources";
 
+export type DiscoverSource = "construction_news" | "prompt_discover";
+
 export interface NewsHit {
   title: string;
   link: string;
   description: string;
   pubDate?: string;
   city: string;
-  source: "construction_news";
+  source: DiscoverSource;
 }
 
 const CONSTRUCTION_QUERIES = [
@@ -97,15 +99,11 @@ function parseLocation(location: string): { city: string; state: string | null }
   return { city: raw, state: null };
 }
 
-async function fetchHits(location: string): Promise<NewsHit[]> {
+async function fetchHitsFromQueries(location: string, queries: string[], source: DiscoverSource): Promise<NewsHit[]> {
   const hits: NewsHit[] = [];
   const seen = new Set<string>();
-  const jobs: Array<{ q: string; source: NewsHit["source"] }> = CONSTRUCTION_QUERIES.map((phrase) => ({
-    q: `${phrase} ${location}`,
-    source: "construction_news" as const,
-  }));
-  for (const job of jobs) {
-    const res = await fetch(googleNewsRss(job.q), {
+  for (const q of queries) {
+    const res = await fetch(googleNewsRss(q), {
       headers: { "User-Agent": env.CRAWLER_USER_AGENT, Accept: "application/rss+xml" },
       signal: AbortSignal.timeout(15000),
     });
@@ -114,16 +112,32 @@ async function fetchHits(location: string): Promise<NewsHit[]> {
     for (const item of items.slice(0, 8)) {
       if (seen.has(item.link)) continue;
       seen.add(item.link);
-      hits.push({ ...item, city: location, source: job.source });
+      hits.push({ ...item, city: location, source });
     }
     await new Promise((r) => setTimeout(r, 400));
   }
   return hits;
 }
 
-export async function discoverByLocation(location: string) {
-  const { city, state } = parseLocation(location);
-  const hits = await fetchHits(location);
+async function fetchHits(location: string): Promise<NewsHit[]> {
+  const queries = CONSTRUCTION_QUERIES.map((phrase) => `${phrase} ${location}`);
+  return fetchHitsFromQueries(location, queries, "construction_news");
+}
+
+async function fetchHitsByPrompt(location: string, prompt: string): Promise<NewsHit[]> {
+  const parts = prompt.split(/[\n;]+/).map((s) => s.trim()).filter(Boolean);
+  const queries = (parts.length ? parts : [prompt]).map((p) => `${p} ${location}`);
+  return fetchHitsFromQueries(location, queries, "prompt_discover");
+}
+
+async function processDiscoverHits(
+  hits: NewsHit[],
+  location: string,
+  city: string,
+  state: string | null,
+  sourceCode: DiscoverSource,
+  sourceName: string,
+) {
   let created = 0;
   let skipped = 0;
   const companies: Array<{
@@ -216,7 +230,7 @@ export async function discoverByLocation(location: string) {
     });
   }
 
-  await bumpSource("construction_news", `${location} construction news`, "news", created);
+  await bumpSource(sourceCode, sourceName, "news", created);
   return {
     found: hits.length,
     created,
@@ -225,4 +239,16 @@ export async function discoverByLocation(location: string) {
     names: companies.map((c) => c.name),
     companies,
   };
+}
+
+export async function discoverByLocation(location: string) {
+  const { city, state } = parseLocation(location);
+  const hits = await fetchHits(location);
+  return processDiscoverHits(hits, location, city, state, "construction_news", `${location} construction news`);
+}
+
+export async function discoverByPrompt(location: string, prompt: string) {
+  const { city, state } = parseLocation(location);
+  const hits = await fetchHitsByPrompt(location, prompt);
+  return processDiscoverHits(hits, location, city, state, "prompt_discover", `Prompt discover: ${prompt.slice(0, 120)}`);
 }
